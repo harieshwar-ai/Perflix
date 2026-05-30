@@ -7,6 +7,7 @@ import { db } from '../db/client.js';
 import { isMediaFile } from '../lib/paths.js';
 import { classify, type Parsed } from './parser.js';
 import { fetchArt } from './art.js';
+import { probeAndPersist } from '../media/probe.js';
 import {
   getMovie,
   getSeason,
@@ -249,33 +250,39 @@ async function ingestFile(absPath: string, ctx: IngestCtx) {
     return;
   }
 
+  let fileRow: { id: number };
   if (parsed.kind === 'movie') {
     const titleId = await ensureMovie(parsed, ctx);
-    insertFile.run({
+    fileRow = insertFile.get({
       title_id: titleId,
       episode_id: null,
       path: absPath,
       size: st.size,
       mtime: Math.floor(st.mtimeMs),
       now: Date.now(),
-    });
-    ctx.log.info({ titleId, path: absPath }, 'ingested movie file');
-    return;
+    }) as { id: number };
+    ctx.log.info({ titleId, fileId: fileRow.id, path: absPath }, 'ingested movie file');
+  } else {
+    const titleId = await ensureSeries(parsed.showName, ctx);
+    const tmdbId = (db.prepare('SELECT tmdb_id FROM titles WHERE id = ?').get(titleId) as { tmdb_id: number | null }).tmdb_id;
+    const epId = await ensureEpisode(titleId, tmdbId, parsed.season, parsed.episode, ctx);
+    fileRow = insertFile.get({
+      title_id: titleId,
+      episode_id: epId,
+      path: absPath,
+      size: st.size,
+      mtime: Math.floor(st.mtimeMs),
+      now: Date.now(),
+    }) as { id: number };
+    ctx.log.info({ titleId, epId, fileId: fileRow.id, path: absPath }, 'ingested episode file');
   }
 
-  // series
-  const titleId = await ensureSeries(parsed.showName, ctx);
-  const tmdbId = (db.prepare('SELECT tmdb_id FROM titles WHERE id = ?').get(titleId) as { tmdb_id: number | null }).tmdb_id;
-  const epId = await ensureEpisode(titleId, tmdbId, parsed.season, parsed.episode, ctx);
-  insertFile.run({
-    title_id: titleId,
-    episode_id: epId,
-    path: absPath,
-    size: st.size,
-    mtime: Math.floor(st.mtimeMs),
-    now: Date.now(),
+  // probe lazily on a deferred microtask so we don't block ingest pipeline
+  setImmediate(() => {
+    probeAndPersist(fileRow.id, absPath).catch((err) =>
+      ctx.log.warn({ err: String(err), fileId: fileRow.id }, 'probe failed'),
+    );
   });
-  ctx.log.info({ titleId, epId, path: absPath }, 'ingested episode file');
 }
 
 function removeFile(absPath: string, log: FastifyBaseLogger) {
