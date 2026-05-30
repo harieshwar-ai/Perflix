@@ -1,41 +1,69 @@
-import { Outlet, createRootRouteWithContext, useNavigate, useRouterState } from '@tanstack/react-router';
+import {
+  Link,
+  Outlet,
+  createRootRouteWithContext,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect } from 'react';
 import { useAuthState, useLogout } from '../lib/auth.js';
+import { LoadingScreen } from '../components/ui/LoadingScreen.js';
+import { TmdbAttribution } from '../components/ui/TmdbAttribution.js';
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootLayout,
 });
+
+const pageVariants = {
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -4 },
+};
 
 function RootLayout() {
   const router = useRouterState();
   const { data: auth, isPending } = useAuthState();
   const navigate = useNavigate();
   const logout = useLogout();
+  const pathname = router.location.pathname;
+  const isPlayer = pathname.startsWith('/play/');
 
   useEffect(() => {
     if (isPending) return;
-    const at = router.location.pathname;
-    const wantsLogin = at === '/login';
+    const wantsLogin = pathname === '/login';
     if (!auth?.authenticated && !wantsLogin) {
       void navigate({ to: '/login', replace: true });
     } else if (auth?.authenticated && wantsLogin) {
       void navigate({ to: '/', replace: true });
     }
-  }, [auth, isPending, router.location.pathname, navigate]);
+  }, [auth, isPending, pathname, navigate]);
 
   if (isPending) {
-    return <div className="min-h-dvh grid place-items-center text-neutral-600">…</div>;
+    return <LoadingScreen label="Checking session…" />;
   }
 
-  const showChrome = auth?.authenticated && router.location.pathname !== '/login';
+  const showChrome = auth?.authenticated && pathname !== '/login';
 
   return (
-    <div className="min-h-dvh bg-black text-white">
-      {showChrome ? <TopNav onLogout={() => logout.mutate()} /> : null}
-      <main className={showChrome ? 'pt-16' : ''}>
-        <Outlet />
+    <div className="min-h-dvh bg-black text-white flex flex-col">
+      {showChrome && !isPlayer ? <TopNav onLogout={() => logout.mutate()} /> : null}
+      <main className={`flex-1 ${showChrome && !isPlayer ? 'pt-16' : ''}`}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={pathname}
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <Outlet />
+          </motion.div>
+        </AnimatePresence>
       </main>
+      {showChrome && !isPlayer ? <TmdbAttribution /> : null}
     </div>
   );
 }
@@ -45,32 +73,43 @@ function TopNav({ onLogout }: { onLogout: () => void }) {
   const path = router.location.pathname;
   const linkCls = (active: boolean) =>
     `text-sm transition-colors ${active ? 'text-white' : 'text-neutral-400 hover:text-white'}`;
+
   return (
     <nav className="fixed inset-x-0 top-0 z-40 backdrop-blur-md bg-black/70 border-b border-white/5">
-      <div className="px-6 h-16 flex items-center justify-between gap-8">
-        <a href="/" className="text-2xl font-black tracking-tight text-brand">
+      <div className="px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <Link to="/" className="text-xl sm:text-2xl font-black tracking-tight text-brand shrink-0">
           PERFLIX
-        </a>
-        <div className="flex items-center gap-6">
-          <a href="/" className={linkCls(path === '/')}>
+        </Link>
+        <div className="hidden md:flex items-center gap-6">
+          <Link to="/" className={linkCls(path === '/')}>
             Home
-          </a>
-          <a href="/browse/movie" className={linkCls(path.startsWith('/browse/movie'))}>
+          </Link>
+          <Link to="/browse/$kind" params={{ kind: 'movie' }} className={linkCls(path.startsWith('/browse/movie'))}>
             Movies
-          </a>
-          <a href="/browse/series" className={linkCls(path.startsWith('/browse/series'))}>
+          </Link>
+          <Link to="/browse/$kind" params={{ kind: 'series' }} className={linkCls(path.startsWith('/browse/series'))}>
             Series
-          </a>
-          <a href="/lists" className={linkCls(path === '/lists')}>
+          </Link>
+          <Link to="/lists" className={linkCls(path === '/lists')}>
             My List
-          </a>
+          </Link>
         </div>
-        <button
-          onClick={onLogout}
-          className="text-xs text-neutral-400 hover:text-white border border-white/10 rounded-full px-3 py-1.5 hover:bg-white/5"
-        >
-          Sign out
-        </button>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex md:hidden items-center gap-3 text-xs">
+            <Link to="/browse/$kind" params={{ kind: 'movie' }} className={linkCls(path.startsWith('/browse'))}>
+              Browse
+            </Link>
+            <Link to="/lists" className={linkCls(path === '/lists')}>
+              List
+            </Link>
+          </div>
+          <button
+            onClick={onLogout}
+            className="text-xs text-neutral-400 hover:text-white border border-white/10 rounded-full px-3 py-1.5 hover:bg-white/5"
+          >
+            Sign out
+          </button>
+        </div>
       </div>
     </nav>
   );

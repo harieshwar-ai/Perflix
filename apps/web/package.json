@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
+    "analyze": "tsc -p tsconfig.json && vite build --mode analyze",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -21,11 +22,13 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/router-plugin": "^1.168.13",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.7.2",
     "vite": "^8.0.14"

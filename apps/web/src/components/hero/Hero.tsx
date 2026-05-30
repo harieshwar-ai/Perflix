@@ -22,20 +22,24 @@ export function Hero({ titles }: Props) {
 
   return (
     <div className="relative w-full h-[75vh] min-h-[420px] overflow-hidden">
-      <AnimatePresence mode="popLayout">
+      <AnimatePresence mode="sync">
         <motion.div
           key={cur.id}
-          initial={{ opacity: 0, scale: 1.04 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 1.0, ease: 'easeOut' }}
+          transition={{ duration: 1.2, ease: [0.4, 0, 0.2, 1] }}
           className="absolute inset-0"
         >
           {cur.backdrop ? (
-            <img
+            <motion.img
+              initial={{ scale: 1.06 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 8, ease: 'linear' }}
               src={cur.backdrop}
               alt={cur.title}
               className="absolute inset-0 w-full h-full object-cover"
+              fetchPriority="high"
             />
           ) : null}
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
@@ -44,64 +48,50 @@ export function Hero({ titles }: Props) {
       </AnimatePresence>
 
       <div className="relative h-full max-w-[1100px] px-6 sm:px-12 flex flex-col justify-end pb-20 z-10">
-        <motion.h1
-          key={`title-${cur.id}`}
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          className="text-4xl sm:text-6xl font-black tracking-tight max-w-[20ch]"
-        >
-          {cur.title}
-        </motion.h1>
-        <motion.div
-          key={`meta-${cur.id}`}
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.18 }}
-          className="mt-3 flex items-center gap-3 text-xs uppercase tracking-wider text-neutral-300"
-        >
-          {cur.year ? <span>{cur.year}</span> : null}
-          {cur.runtime ? <span>{cur.runtime} min</span> : null}
-          {cur.rating ? <span>★ {cur.rating.toFixed(1)}</span> : null}
-          {cur.genres.slice(0, 3).map((g) => (
-            <span key={g} className="border border-white/20 px-2 py-0.5 rounded">
-              {g}
-            </span>
-          ))}
-        </motion.div>
-        {cur.overview ? (
-          <motion.p
-            key={`overview-${cur.id}`}
-            initial={{ opacity: 0, y: 16 }}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={cur.id}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.26 }}
-            className="mt-4 max-w-[50ch] text-sm sm:text-base text-neutral-200 line-clamp-3"
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.45, ease: [0.32, 0.72, 0, 1] }}
           >
-            {cur.overview}
-          </motion.p>
-        ) : null}
-        <motion.div
-          key={`cta-${cur.id}`}
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.34 }}
-          className="mt-6 flex items-center gap-3"
-        >
-          <Link
-            to="/title/$id"
-            params={{ id: String(cur.id) }}
-            className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors"
-          >
-            <PlayIcon /> Play
-          </Link>
-          <Link
-            to="/title/$id"
-            params={{ id: String(cur.id) }}
-            className="inline-flex items-center gap-2 bg-white/15 backdrop-blur text-white font-semibold px-6 py-2.5 rounded-md hover:bg-white/25 transition-colors"
-          >
-            More info
-          </Link>
-        </motion.div>
+            <h1 className="text-4xl sm:text-6xl font-black tracking-tight max-w-[20ch]">
+              {cur.title}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs uppercase tracking-wider text-neutral-300">
+              {cur.year ? <span>{cur.year}</span> : null}
+              {cur.runtime ? <span>{cur.runtime} min</span> : null}
+              {cur.rating ? <span>★ {cur.rating.toFixed(1)}</span> : null}
+              {cur.genres.slice(0, 3).map((g) => (
+                <span key={g} className="border border-white/20 px-2 py-0.5 rounded">
+                  {g}
+                </span>
+              ))}
+            </div>
+            {cur.overview ? (
+              <p className="mt-4 max-w-[50ch] text-sm sm:text-base text-neutral-200 line-clamp-3">
+                {cur.overview}
+              </p>
+            ) : null}
+            <div className="mt-6 flex items-center gap-3">
+              <Link
+                to="/title/$id"
+                params={{ id: String(cur.id) }}
+                className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors"
+              >
+                <PlayIcon /> Play
+              </Link>
+              <Link
+                to="/title/$id"
+                params={{ id: String(cur.id) }}
+                className="inline-flex items-center gap-2 bg-white/15 backdrop-blur text-white font-semibold px-6 py-2.5 rounded-md hover:bg-white/25 transition-colors"
+              >
+                More info
+              </Link>
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {featured.length > 1 ? (
@@ -110,7 +100,7 @@ export function Hero({ titles }: Props) {
             <button
               key={i}
               onClick={() => setIdx(i)}
-              className={`h-1 rounded-full transition-all ${
+              className={`h-1 rounded-full transition-all duration-300 ${
                 i === idx ? 'w-8 bg-white' : 'w-4 bg-white/30 hover:bg-white/50'
               }`}
               aria-label={`feature ${i + 1}`}

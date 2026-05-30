@@ -28,10 +28,12 @@ See the implementation plan at `/Users/harieshwar-ai/.claude/plans/linked-juggli
 Prereqs: Node 20+, npm 10+, FFmpeg (`brew install ffmpeg`).
 
 ```bash
-cp .env.example .env       # fill in TMDB_API_KEY, OPENSUBS_API_KEY, secrets, LIBRARY_ROOT
+cp .env.example .env       # fill in TMDB_ACCESS_TOKEN, OPENSUBS_API_KEY, secrets, LIBRARY_ROOT
 npm install
 npm run dev                # server on :7000, web on :5173
 ```
+
+Open http://localhost:5173 for dev. Production: `npm run build && npm start` → http://127.0.0.1:7000.
 
 ## Commands
 
@@ -39,6 +41,7 @@ npm run dev                # server on :7000, web on :5173
 - `npm run build` — typechecks + builds both packages for production.
 - `npm run typecheck` — TS check across both workspaces.
 - `npm run format` — Prettier across `apps/*/src`.
+- `npm run analyze` — web bundle analysis → `apps/web/dist/stats.html`.
 - `npm run -w @perflix/server dev` — server only.
 - `npm run -w @perflix/web dev` — web only.
 

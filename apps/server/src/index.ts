@@ -28,7 +28,23 @@ const app = Fastify({
 });
 
 await app.register(helmet, {
-  contentSecurityPolicy: false, // SPA + HLS make CSP tight; tune in Phase 12
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      workerSrc: ["'self'", 'blob:'],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: config.PUBLIC_URL.startsWith('https://') ? [] : null,
+    },
+  },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'same-site' },
 });

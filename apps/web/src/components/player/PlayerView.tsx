@@ -225,22 +225,26 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [goBack]);
 
-  // controls auto-hide
+  // controls auto-hide (fade after idle; stay visible when paused)
   useEffect(() => {
     const reset = () => {
       setShowControls(true);
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
       hideTimer.current = window.setTimeout(() => {
         if (!videoRef.current?.paused) setShowControls(false);
-      }, 3000);
+      }, 2500);
     };
     reset();
     const el = containerRef.current;
     if (!el) return;
     el.addEventListener('mousemove', reset);
-    el.addEventListener('mouseleave', () => setShowControls(false));
+    el.addEventListener('touchstart', reset, { passive: true });
+    el.addEventListener('mouseleave', () => {
+      if (!videoRef.current?.paused) setShowControls(false);
+    });
     return () => {
       el.removeEventListener('mousemove', reset);
+      el.removeEventListener('touchstart', reset);
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
     };
   }, []);
@@ -309,14 +313,14 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
         ))}
       </video>
 
-      <AnimatePresence>
+      <AnimatePresence mode="sync">
         {showControls ? (
           <>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               className="absolute inset-x-0 top-0 z-10 pt-4 px-6 pb-12 bg-gradient-to-b from-black/80 to-transparent flex items-start justify-between gap-4"
             >
               <button onClick={goBack} className="text-white/90 hover:text-white text-2xl">
@@ -338,10 +342,10 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
             </motion.div>
 
             <motion.div
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.2 }}
+              exit={{ opacity: 0, y: 12 }}
+              transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               className="absolute inset-x-0 bottom-0 z-10 px-6 pb-6 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent"
             >
               {/* progress bar */}

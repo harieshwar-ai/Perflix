@@ -12,7 +12,8 @@
     "build": "npm run build -w @perflix/web && npm run build -w @perflix/server",
     "start": "node apps/server/dist/index.js",
     "typecheck": "npm run typecheck -w @perflix/server && npm run typecheck -w @perflix/web",
-    "format": "prettier --write \"apps/*/src/**/*.{ts,tsx,css,json}\""
+    "format": "prettier --write \"apps/*/src/**/*.{ts,tsx,css,json}\"",
+    "analyze": "npm run analyze -w @perflix/web"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
