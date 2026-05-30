@@ -6,7 +6,6 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
-import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect } from 'react';
 import { useAuthState, useLogout } from '../lib/auth.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
@@ -15,12 +14,6 @@ import { TmdbAttribution } from '../components/ui/TmdbAttribution.js';
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootLayout,
 });
-
-const pageVariants = {
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -4 },
-};
 
 function RootLayout() {
   const router = useRouterState();
@@ -50,18 +43,7 @@ function RootLayout() {
     <div className="min-h-dvh bg-black text-white flex flex-col">
       {showChrome && !isPlayer ? <TopNav onLogout={() => logout.mutate()} /> : null}
       <main className={`flex-1 ${showChrome && !isPlayer ? 'pt-16' : ''}`}>
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={pathname}
-            variants={pageVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
-          >
-            <Outlet />
-          </motion.div>
-        </AnimatePresence>
+        <Outlet />
       </main>
       {showChrome && !isPlayer ? <TmdbAttribution /> : null}
     </div>
