@@ -1,6 +1,10 @@
 import Fastify from 'fastify';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import './db/client.js';
 import { registerAuthGate } from './auth/gate.js';
@@ -46,6 +50,43 @@ await registerSubsRoutes(app);
 await registerPlayRoutes(app);
 await registerProgressRoutes(app);
 await registerListsRoutes(app);
+
+// Production: serve built SPA from apps/web/dist. Public — the SPA decides what to render
+// based on /api/auth/state; gated APIs return 401 to drive the login flow.
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dev: apps/server/src -> ../../web/dist ; prod: apps/server/dist -> ../../web/dist
+  const webDist = resolve(here, '../../web/dist');
+  if (existsSync(webDist)) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      prefix: '/',
+      decorateReply: false,
+      wildcard: false,
+    });
+    const indexHtml = readFileSync(resolve(webDist, 'index.html'), 'utf8');
+    app.setNotFoundHandler((req, reply) => {
+      const url = req.url.split('?', 1)[0] ?? req.url;
+      if (
+        url.startsWith('/api/') ||
+        url.startsWith('/stream/') ||
+        url.startsWith('/hls/') ||
+        url.startsWith('/preview/') ||
+        url.startsWith('/thumbs/') ||
+        url.startsWith('/art/') ||
+        url.startsWith('/subs/') ||
+        url === '/health'
+      ) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+      reply.header('Content-Type', 'text/html; charset=utf-8');
+      return reply.send(indexHtml);
+    });
+    app.log.info({ webDist }, 'serving SPA');
+  } else {
+    app.log.info('web/dist not present — SPA served by vite dev on :5173');
+  }
+}
 
 app.post('/api/library/rescan', async () => {
   await stopScanner();

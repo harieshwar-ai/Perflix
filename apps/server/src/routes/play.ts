@@ -17,17 +17,6 @@ const findEpisode = db.prepare(`
   FROM episodes WHERE id = ?
 `);
 
-const findSiblingFile = db.prepare(`
-  SELECT f.id AS file_id, e.season, e.episode, e.name
-  FROM episodes e
-  JOIN files f ON f.episode_id = e.id
-  WHERE e.title_id = @title_id
-    AND ((e.season > @season) OR (e.season = @season AND e.episode @cmp @episode))
-  ORDER BY e.season @ord, e.episode @ord
-  LIMIT 1
-`);
-
-// SQLite doesn't allow parameterizing comparison operators or ORDER direction; build per-direction queries.
 const findNextEpisode = db.prepare(`
   SELECT f.id AS file_id, e.season, e.episode, e.name
   FROM episodes e
@@ -141,7 +130,4 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       thumbsSpriteUrl: `/thumbs/${id}/sprite.jpg`,
     };
   });
-
-  // unused: keep import busy for tools that prune unused vars
-  void findSiblingFile;
 }
