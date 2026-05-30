@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { config } from './config.js';
 import './db/client.js';
 import { registerLibraryRoutes } from './routes/library.js';
+import { registerStreamRoutes } from './routes/stream.js';
 import { startScanner, stopScanner } from './library/scanner.js';
 
 const app = Fastify({
@@ -14,6 +15,7 @@ const app = Fastify({
 app.get('/health', async () => ({ ok: true, name: 'perflix', version: '0.1.0' }));
 
 await registerLibraryRoutes(app);
+await registerStreamRoutes(app);
 
 app.post('/api/library/rescan', async () => {
   await stopScanner();
