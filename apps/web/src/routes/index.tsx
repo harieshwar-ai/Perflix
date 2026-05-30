@@ -1,6 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api, type Title } from '../lib/api.js';
+import { Hero } from '../components/hero/Hero.js';
+import { Row } from '../components/row/Row.js';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
@@ -20,49 +22,60 @@ function HomePage() {
 
   if (titles.length === 0) {
     return (
-      <div className="px-6 py-12">
-        <h2 className="text-2xl font-semibold">No titles yet</h2>
-        <p className="mt-2 text-neutral-400 text-sm max-w-prose">
-          Drop video files into your library root and they'll appear here. The scanner watches in
-          real time. If nothing's showing up, verify <code className="text-white">LIBRARY_ROOT</code>{' '}
-          in <code className="text-white">.env</code> points at a folder with{' '}
-          <code className="text-white">Movies/</code> and <code className="text-white">TV/</code>{' '}
-          subfolders.
+      <div className="px-6 py-24 max-w-2xl mx-auto">
+        <h2 className="text-3xl font-bold">Your library is empty</h2>
+        <p className="mt-4 text-neutral-400">
+          Set <code className="text-white">LIBRARY_ROOT</code> in <code className="text-white">.env</code>{' '}
+          (e.g., <code className="text-white">/Volumes/Extreme SSD/Perflix Media</code>) and drop
+          files into <code className="text-white">Movies/</code> or{' '}
+          <code className="text-white">TV/&lt;Show&gt;/Season N/</code>. The scanner watches in
+          real time.
         </p>
       </div>
     );
   }
 
+  const featured = pickFeatured(titles);
+  const recent = [...titles].sort((a, b) => b.added_at - a.added_at).slice(0, 18);
+  const movies = titles.filter((t) => t.kind === 'movie').slice(0, 18);
+  const series = titles.filter((t) => t.kind === 'series').slice(0, 18);
+  const byGenre = groupByGenre(titles);
+
   return (
-    <div className="px-6 py-12 space-y-12">
-      <section>
-        <h2 className="text-xl font-semibold mb-4">Recently added</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          {titles.slice(0, 12).map((t) => (
-            <a
-              key={t.id}
-              href={`/title/${t.id}`}
-              className="group block aspect-[2/3] rounded-md overflow-hidden bg-neutral-900 relative"
-            >
-              {t.poster ? (
-                <img
-                  src={t.poster}
-                  alt={t.title}
-                  loading="lazy"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                />
-              ) : (
-                <div className="absolute inset-0 grid place-items-center text-xs text-neutral-500 p-2 text-center">
-                  {t.title}
-                </div>
-              )}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 text-xs">
-                {t.title}
-              </div>
-            </a>
-          ))}
-        </div>
-      </section>
+    <div className="-mt-16">
+      <Hero titles={featured} />
+      <div className="pt-6 space-y-8 pb-16">
+        <Row heading="Recently added" titles={recent} />
+        {movies.length > 0 ? <Row heading="Movies" titles={movies} /> : null}
+        {series.length > 0 ? <Row heading="Series" titles={series} /> : null}
+        {byGenre.slice(0, 6).map(([genre, list]) => (
+          <Row key={genre} heading={genre} titles={list} />
+        ))}
+      </div>
     </div>
   );
+}
+
+function pickFeatured(titles: Title[]): Title[] {
+  return [...titles]
+    .filter((t) => t.backdrop && t.overview)
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 6);
+}
+
+function groupByGenre(titles: Title[]): [string, Title[]][] {
+  const map = new Map<string, Title[]>();
+  for (const t of titles) {
+    for (const g of t.genres ?? []) {
+      let bucket = map.get(g);
+      if (!bucket) {
+        bucket = [];
+        map.set(g, bucket);
+      }
+      bucket.push(t);
+    }
+  }
+  return [...map.entries()]
+    .filter(([, v]) => v.length >= 3)
+    .sort((a, b) => b[1].length - a[1].length);
 }
