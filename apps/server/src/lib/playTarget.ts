@@ -55,7 +55,7 @@ export function resolvePlayTarget(titleId: number, kind: 'movie' | 'series', use
     return { fileId: resumed.file_id, position: resumed.position, action: 'resume' };
   }
 
-  const first = seriesFirstEpisode.get(titleId) as { file_id: number } | undefined;
+  const first = seriesFirstEpisode.get({ title_id: titleId }) as { file_id: number } | undefined;
   if (!first?.file_id) return null;
   return { fileId: first.file_id, position: 0, action: 'play' };
 }
