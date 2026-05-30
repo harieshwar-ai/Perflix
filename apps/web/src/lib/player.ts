@@ -8,15 +8,12 @@ export function canPlayNativeHls(video: HTMLVideoElement): boolean {
 
 export type AttachHandle = {
   destroy: () => void;
-  setLevel: (index: number) => void;
-  getLevels: () => LevelInfo[];
 };
 
 export function attachStream(
   video: HTMLVideoElement,
   url: string,
   preferDirect: boolean,
-  onLevels: (levels: LevelInfo[]) => void,
 ): AttachHandle {
   if (preferDirect) {
     video.src = url;
@@ -25,21 +22,16 @@ export function attachStream(
         video.removeAttribute('src');
         video.load();
       },
-      setLevel: () => {},
-      getLevels: () => [],
     };
   }
 
   if (canPlayNativeHls(video)) {
     video.src = url;
-    onLevels([]);
     return {
       destroy: () => {
         video.removeAttribute('src');
         video.load();
       },
-      setLevel: () => {},
-      getLevels: () => [],
     };
   }
 
@@ -50,8 +42,6 @@ export function attachStream(
         video.removeAttribute('src');
         video.load();
       },
-      setLevel: () => {},
-      getLevels: () => [],
     };
   }
 
@@ -64,17 +54,8 @@ export function attachStream(
   });
   hls.loadSource(url);
   hls.attachMedia(video);
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    const ls: LevelInfo[] = hls.levels.map((l, i) => ({
-      index: i,
-      height: l.height,
-      bitrate: l.bitrate,
-    }));
-    onLevels(ls);
-  });
   hls.on(Hls.Events.ERROR, (_evt, data) => {
     if (data.fatal) {
-      // Try recover on network/media; HLS fatal is unrecoverable
       switch (data.type) {
         case Hls.ErrorTypes.NETWORK_ERROR:
           hls.startLoad();
@@ -91,12 +72,6 @@ export function attachStream(
       video.removeAttribute('src');
       video.load();
     },
-    setLevel: (i) => {
-      hls.nextLevel = i;
-      hls.currentLevel = i;
-    },
-    getLevels: () =>
-      hls.levels.map((l, i) => ({ index: i, height: l.height, bitrate: l.bitrate })),
   };
 }
 

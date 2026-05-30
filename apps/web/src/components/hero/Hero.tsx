@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link } from '@tanstack/react-router';
-import type { Title } from '../../lib/api.js';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
+import { api, type PlayTarget, type Title } from '../../lib/api.js';
 
 type Props = { titles: Title[] };
 
 const ROTATE_MS = 8000;
 
 export function Hero({ titles }: Props) {
+  const navigate = useNavigate();
   const featured = titles.filter((t) => t.backdrop || t.poster).slice(0, 6);
   const [idx, setIdx] = useState(0);
 
@@ -19,6 +21,12 @@ export function Hero({ titles }: Props) {
 
   if (featured.length === 0) return null;
   const cur = featured[idx]!;
+
+  const { data: playTarget } = useQuery({
+    queryKey: ['play-target', cur.id],
+    queryFn: () => api.get<PlayTarget>(`/api/title/${cur.id}/play-target`),
+    retry: false,
+  });
 
   return (
     <div className="relative w-full h-[75vh] min-h-[420px] overflow-hidden">
@@ -47,7 +55,7 @@ export function Hero({ titles }: Props) {
         </motion.div>
       </AnimatePresence>
 
-      <div className="relative h-full max-w-[1100px] px-6 sm:px-12 flex flex-col justify-end pb-20 z-10">
+      <div className="relative h-full max-w-[1100px] px-6 sm:px-12 flex flex-col justify-end pb-20 z-10 pointer-events-none">
         <AnimatePresence mode="wait">
           <motion.div
             key={cur.id}
@@ -55,6 +63,7 @@ export function Hero({ titles }: Props) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             transition={{ duration: 0.45, ease: [0.32, 0.72, 0, 1] }}
+            className="pointer-events-auto"
           >
             <h1 className="text-4xl sm:text-6xl font-black tracking-tight max-w-[20ch]">
               {cur.title}
@@ -75,13 +84,13 @@ export function Hero({ titles }: Props) {
               </p>
             ) : null}
             <div className="mt-6 flex items-center gap-3">
-              <Link
-                to="/title/$id"
-                params={{ id: String(cur.id) }}
-                className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors"
+              <button
+                disabled={!playTarget}
+                onClick={() => playTarget && void navigate({ to: `/play/${playTarget.fileId}` })}
+                className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors disabled:opacity-40"
               >
-                <PlayIcon /> Play
-              </Link>
+                <PlayIcon /> {playTarget?.action === 'resume' ? 'Resume' : 'Play'}
+              </button>
               <Link
                 to="/title/$id"
                 params={{ id: String(cur.id) }}
@@ -95,7 +104,7 @@ export function Hero({ titles }: Props) {
       </div>
 
       {featured.length > 1 ? (
-        <div className="absolute right-6 bottom-6 z-10 flex gap-1.5">
+        <div className="absolute right-6 bottom-6 z-10 flex gap-1.5 pointer-events-auto">
           {featured.map((_, i) => (
             <button
               key={i}

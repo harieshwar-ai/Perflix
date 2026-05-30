@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from '@tanstack/react-router';
-import type { Title } from '../../lib/api.js';
+import { api, type Title } from '../../lib/api.js';
 
 type Props = {
   title: Title;
@@ -9,18 +9,22 @@ type Props = {
   hoverPreview?: boolean;
 };
 
-const HOVER_DELAY_MS = 550;
+const HOVER_DELAY_MS = 500;
+const LONG_PRESS_MS = 450;
 const spring = { type: 'spring' as const, stiffness: 420, damping: 32, mass: 0.85 };
 
 export function Tile({ title, variant = 'poster', hoverPreview = true }: Props) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [previewFileId, setPreviewFileId] = useState<number | null>(null);
-  const timer = useRef<number | null>(null);
+  const hoverTimer = useRef<number | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const suppressClick = useRef(false);
 
   useEffect(
     () => () => {
-      if (timer.current) window.clearTimeout(timer.current);
+      if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+      if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
     },
     [],
   );
@@ -29,45 +33,84 @@ export function Tile({ title, variant = 'poster', hoverPreview = true }: Props) 
   const aspect = isLandscape ? 'aspect-[16/9]' : 'aspect-[2/3]';
   const imageSrc = isLandscape ? (title.backdrop ?? title.poster) : (title.poster ?? title.backdrop);
 
+  const activatePreview = useCallback(async () => {
+    setExpanded(true);
+    try {
+      const { fileId } = await api.get<{ fileId: number }>(`/api/title/${title.id}/preview-file`);
+      setPreviewFileId(fileId);
+    } catch {
+      setPreviewFileId(null);
+    }
+  }, [title.id]);
+
   function open() {
     void navigate({ to: `/title/${title.id}` });
   }
 
-  function onEnter() {
-    if (!hoverPreview) return;
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(async () => {
-      setExpanded(true);
-      try {
-        const detail = await (await fetch(`/api/title/${title.id}`)).json();
-        const fileId =
-          detail?.file?.file_id ??
-          detail?.episodes?.find((e: { file_id: number | null }) => e.file_id)?.file_id ??
-          null;
-        if (fileId) setPreviewFileId(fileId);
-      } catch {
-        // ignore
-      }
-    }, HOVER_DELAY_MS);
+  function clearTimers() {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
   }
 
-  function onLeave() {
-    if (timer.current) window.clearTimeout(timer.current);
+  function deactivatePreview() {
+    clearTimers();
     setExpanded(false);
     setPreviewFileId(null);
   }
 
+  function onMouseEnter() {
+    if (!hoverPreview) return;
+    clearTimers();
+    hoverTimer.current = window.setTimeout(() => {
+      void activatePreview();
+    }, HOVER_DELAY_MS);
+  }
+
+  function onMouseLeave() {
+    deactivatePreview();
+  }
+
+  function onTouchStart() {
+    if (!hoverPreview) return;
+    suppressClick.current = false;
+    clearTimers();
+    longPressTimer.current = window.setTimeout(() => {
+      suppressClick.current = true;
+      void activatePreview();
+    }, LONG_PRESS_MS);
+  }
+
+  function onTouchEnd() {
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+  }
+
+  function onClick() {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    if (expanded) {
+      deactivatePreview();
+      return;
+    }
+    open();
+  }
+
   return (
     <div
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      onClick={open}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={onTouchEnd}
+      onClick={onClick}
       className="relative cursor-pointer"
+      style={{ zIndex: expanded ? 40 : undefined }}
     >
       <motion.div
         layout="position"
         className={`relative ${aspect} rounded-md overflow-hidden bg-neutral-900 shadow-lg will-change-transform`}
-        animate={{ scale: expanded ? 1.16 : 1, zIndex: expanded ? 30 : 1 }}
+        animate={{ scale: expanded ? 1.16 : 1 }}
         transition={spring}
         style={{ originY: 0.5 }}
       >
@@ -99,7 +142,7 @@ export function Tile({ title, variant = 'poster', hoverPreview = true }: Props) 
               muted
               playsInline
               loop
-              preload="none"
+              crossOrigin="use-credentials"
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
             />
           ) : null}

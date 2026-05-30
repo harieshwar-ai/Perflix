@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.js';
+import { defaultQuality, qualitiesFor } from '../lib/qualities.js';
+import { probeAndPersist } from '../media/probe.js';
 
 const findFile = db.prepare(`
   SELECT f.id AS file_id, f.duration, f.width, f.height, f.mode, f.container, f.vcodec, f.acodec,
-         f.title_id, f.episode_id
+         f.title_id, f.episode_id, f.path
   FROM files f WHERE f.id = ?
 `);
 
@@ -62,9 +64,23 @@ export async function registerPlayRoutes(app: FastifyInstance) {
           acodec: string | null;
           title_id: number | null;
           episode_id: number | null;
+          path: string;
         }
       | undefined;
     if (!file) return reply.code(404).send({ error: 'not found' });
+
+    let probe = {
+      container: file.container ?? 'unknown',
+      duration: file.duration ?? 0,
+      vcodec: file.vcodec,
+      acodec: file.acodec,
+      width: file.width,
+      height: file.height,
+      mode: (file.mode ?? 'transcode') as 'direct' | 'remux' | 'transcode',
+    };
+    if (!file.mode || !file.duration) {
+      probe = await probeAndPersist(id, file.path);
+    }
 
     const title = file.title_id
       ? (findTitle.get(file.title_id) as Record<string, unknown> | undefined) ?? null
@@ -98,9 +114,10 @@ export async function registerPlayRoutes(app: FastifyInstance) {
     const userId = req.userId!;
     const progress = (findProgress.get(userId, id) as { position: number; duration: number | null } | undefined) ?? null;
 
-    const mode = file.mode ?? 'transcode';
+    const mode = probe.mode;
     const preferDirect = mode === 'direct';
-    const streamUrl = preferDirect ? `/stream/${id}` : `/hls/${id}/master.m3u8`;
+    const qualities = qualitiesFor(id, mode, probe);
+    const selected = defaultQuality(qualities);
 
     if (title && typeof title['genres'] === 'string') {
       try {
@@ -116,7 +133,12 @@ export async function registerPlayRoutes(app: FastifyInstance) {
     if (episode && episode['still']) episode['still'] = `/art/${episode['still']}`;
 
     return {
-      file,
+      file: {
+        id: file.file_id,
+        duration: file.duration,
+        width: file.width,
+        height: file.height,
+      },
       title,
       episode,
       next,
@@ -125,7 +147,9 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       progress,
       mode,
       preferDirect,
-      streamUrl,
+      streamUrl: selected.streamUrl,
+      qualities,
+      defaultQualityRung: selected.rung,
       thumbsMetaUrl: `/thumbs/${id}/meta.json`,
       thumbsSpriteUrl: `/thumbs/${id}/sprite.jpg`,
     };

@@ -1,29 +1,9 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { motion, AnimatePresence } from 'framer-motion';
-import { attachStream, fmtTime, type AttachHandle, type LevelInfo } from '../../lib/player.js';
-import { api } from '../../lib/api.js';
+import { attachStream, fmtTime } from '../../lib/player.js';
+import { api, type PlayContext, type QualityOption } from '../../lib/api.js';
 import { SubtitlePicker } from './SubtitlePicker.js';
-
-type Ctx = {
-  file: { id: number; duration: number | null };
-  title: {
-    id: number;
-    kind: 'movie' | 'series';
-    title: string;
-    backdrop: string | null;
-  } | null;
-  episode: { season: number; episode: number; name: string | null } | null;
-  next: { file_id: number; season: number; episode: number; name: string | null } | null;
-  prev: { file_id: number; season: number; episode: number; name: string | null } | null;
-  subtitles: { id: number; lang: string; label: string | null; source: string; url: string }[];
-  progress: { position: number; duration: number | null } | null;
-  mode: 'direct' | 'remux' | 'transcode';
-  preferDirect: boolean;
-  streamUrl: string;
-  thumbsMetaUrl: string;
-  thumbsSpriteUrl: string;
-};
 
 type ThumbMeta = {
   tileWidth: number;
@@ -37,11 +17,13 @@ type ThumbMeta = {
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
-export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
+export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }) {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const handleRef = useRef<AttachHandle | null>(null);
+  const seekBarRef = useRef<HTMLDivElement>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const handleRef = useRef<ReturnType<typeof attachStream> | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -49,43 +31,89 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState<number>(1);
-  const [levels, setLevels] = useState<LevelInfo[]>([]);
-  const [currentLevel, setCurrentLevel] = useState<number | 'auto'>('auto');
+  const [qualityRung, setQualityRung] = useState(ctx.defaultQualityRung);
+  const [streamUrl, setStreamUrl] = useState(ctx.streamUrl);
   const [showControls, setShowControls] = useState(true);
   const [showSubs, setShowSubs] = useState(false);
   const [currentSub, setCurrentSub] = useState<number | 'off'>('off');
   const [thumbMeta, setThumbMeta] = useState<ThumbMeta | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number>(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
 
   const hideTimer = useRef<number | null>(null);
+  const scrubbingRef = useRef(false);
+  scrubbingRef.current = scrubbing;
 
   const goBack = useCallback(() => {
     if (ctx.title) void navigate({ to: `/title/${ctx.title.id}` });
     else void navigate({ to: '/' });
   }, [ctx.title, navigate]);
 
-  // attach stream + initial state
+  const displayTime = scrubTime ?? time;
+  const progressPct = duration > 0 ? (displayTime / duration) * 100 : 0;
+
+  const currentQuality = useMemo(
+    () => ctx.qualities.find((q) => q.rung === qualityRung) ?? ctx.qualities[0],
+    [ctx.qualities, qualityRung],
+  );
+
+  const pctFromClientX = useCallback(
+    (clientX: number) => {
+      const rect = seekBarRef.current?.getBoundingClientRect();
+      if (!rect?.width) return 0;
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    },
+    [],
+  );
+
+  const seekToTime = useCallback(
+    (t: number, updateVideo = true) => {
+      const clamped = Math.max(0, Math.min(duration, t));
+      setScrubTime(null);
+      setTime(clamped);
+      if (updateVideo && videoRef.current) {
+        videoRef.current.currentTime = clamped;
+      }
+    },
+    [duration],
+  );
+
+  const changeQuality = useCallback(
+    (q: QualityOption) => {
+      if (q.rung === qualityRung) return;
+      const v = videoRef.current;
+      if (v && Number.isFinite(v.currentTime)) pendingSeekRef.current = v.currentTime;
+      setQualityRung(q.rung);
+      setStreamUrl(q.streamUrl);
+    },
+    [qualityRung],
+  );
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const h = attachStream(video, ctx.streamUrl, ctx.preferDirect, setLevels);
+    const h = attachStream(video, streamUrl, ctx.preferDirect);
     handleRef.current = h;
 
     const onLoaded = () => {
       const d = video.duration || ctx.file.duration || 0;
       setDuration(d);
-      const resume = ctx.progress?.position ?? 0;
+      const pending = pendingSeekRef.current;
+      pendingSeekRef.current = null;
+      const resume = pending ?? ctx.progress?.position ?? 0;
       if (resume > 30 && (!d || resume / d < 0.95)) {
         video.currentTime = resume;
+        setTime(resume);
       }
-      void video.play().catch(() => {
-        /* user gesture required */
-      });
+      void video.play().catch(() => {});
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onTime = () => setTime(video.currentTime);
+    const onTime = () => {
+      if (!scrubbingRef.current) setTime(video.currentTime);
+    };
     const onVol = () => {
       setVolume(video.volume);
       setMuted(video.muted);
@@ -114,14 +142,11 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
       h.destroy();
       handleRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.streamUrl, ctx.preferDirect]);
+  }, [streamUrl, ctx.preferDirect, ctx.progress?.position, ctx.file.duration, ctx.next, navigate]);
 
-  // subtitles: refresh whenever the picker changes
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    // wait one tick to allow tracks DOM update
     const id = window.setTimeout(() => {
       for (let i = 0; i < video.textTracks.length; i++) {
         const t = video.textTracks[i];
@@ -132,10 +157,9 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     return () => window.clearTimeout(id);
   }, [currentSub, ctx.subtitles]);
 
-  // thumb meta
   useEffect(() => {
     let cancelled = false;
-    fetch(ctx.thumbsMetaUrl)
+    fetch(ctx.thumbsMetaUrl, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!cancelled && d) setThumbMeta(d as ThumbMeta);
@@ -146,19 +170,17 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     };
   }, [ctx.thumbsMetaUrl]);
 
-  // progress save every 5s
   useEffect(() => {
     const t = window.setInterval(() => {
       const v = videoRef.current;
-      if (!v || v.paused) return;
+      if (!v || v.paused || scrubbing) return;
       api
         .post('/api/progress', { fileId, position: v.currentTime, duration: v.duration || null })
         .catch(() => {});
     }, 5000);
     return () => window.clearInterval(t);
-  }, [fileId]);
+  }, [fileId, scrubbing]);
 
-  // save on unload + pause
   useEffect(() => {
     const save = () => {
       const v = videoRef.current;
@@ -178,7 +200,6 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     };
   }, [fileId]);
 
-  // keyboard
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const v = videoRef.current;
@@ -192,16 +213,16 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
           else v.pause();
           break;
         case 'ArrowLeft':
-          v.currentTime = Math.max(0, v.currentTime - 5);
+          seekToTime(v.currentTime - 5);
           break;
         case 'ArrowRight':
-          v.currentTime = Math.min(v.duration, v.currentTime + 5);
+          seekToTime(v.currentTime + 5);
           break;
         case 'j':
-          v.currentTime = Math.max(0, v.currentTime - 10);
+          seekToTime(v.currentTime - 10);
           break;
         case 'l':
-          v.currentTime = Math.min(v.duration, v.currentTime + 10);
+          seekToTime(v.currentTime + 10);
           break;
         case 'ArrowUp':
           v.volume = Math.min(1, v.volume + 0.05);
@@ -223,15 +244,14 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goBack]);
+  }, [goBack, seekToTime]);
 
-  // controls auto-hide (fade after idle; stay visible when paused)
   useEffect(() => {
     const reset = () => {
       setShowControls(true);
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
       hideTimer.current = window.setTimeout(() => {
-        if (!videoRef.current?.paused) setShowControls(false);
+        if (!videoRef.current?.paused && !scrubbing) setShowControls(false);
       }, 2500);
     };
     reset();
@@ -240,16 +260,14 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     el.addEventListener('mousemove', reset);
     el.addEventListener('touchstart', reset, { passive: true });
     el.addEventListener('mouseleave', () => {
-      if (!videoRef.current?.paused) setShowControls(false);
+      if (!videoRef.current?.paused && !scrubbing) setShowControls(false);
     });
     return () => {
       el.removeEventListener('mousemove', reset);
       el.removeEventListener('touchstart', reset);
       if (hideTimer.current) window.clearTimeout(hideTimer.current);
     };
-  }, []);
-
-  const progressPct = duration > 0 ? (time / duration) * 100 : 0;
+  }, [scrubbing]);
 
   const thumbStyle = useMemo<React.CSSProperties | null>(() => {
     if (!thumbMeta || hoverTime === null) return null;
@@ -261,6 +279,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
       height: thumbMeta.tileHeight,
       backgroundImage: `url(${ctx.thumbsSpriteUrl})`,
       backgroundPosition: `-${col * thumbMeta.tileWidth}px -${row * thumbMeta.tileHeight}px`,
+      backgroundSize: `${thumbMeta.cols * thumbMeta.tileWidth}px ${thumbMeta.rows * thumbMeta.tileHeight}px`,
       backgroundRepeat: 'no-repeat',
     };
   }, [thumbMeta, hoverTime, ctx.thumbsSpriteUrl]);
@@ -272,22 +291,47 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
     else await document.exitFullscreen();
   }
 
-  function seek(pct: number) {
-    const v = videoRef.current;
-    if (!v || !duration) return;
-    v.currentTime = Math.max(0, Math.min(duration, duration * pct));
+  function updateHover(clientX: number) {
+    const rect = seekBarRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const pct = pctFromClientX(clientX);
+    const t = duration * pct;
+    setHoverTime(t);
+    setHoverX(clientX - rect.left);
+    return t;
   }
 
-  function onSeekBarMove(e: React.MouseEvent<HTMLDivElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const pct = Math.max(0, Math.min(1, x / rect.width));
-    setHoverTime(duration * pct);
-    setHoverX(x);
+  function onSeekPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setScrubbing(true);
+    setShowControls(true);
+    const t = updateHover(e.clientX) ?? 0;
+    setScrubTime(t);
+    setTime(t);
+  }
+
+  function onSeekPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (scrubbing) {
+      const t = updateHover(e.clientX) ?? 0;
+      setScrubTime(t);
+      setTime(t);
+    } else {
+      updateHover(e.clientX);
+    }
+  }
+
+  function onSeekPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!scrubbing) return;
+    const pct = pctFromClientX(e.clientX);
+    seekToTime(duration * pct);
+    setScrubbing(false);
+    setHoverTime(null);
+    e.currentTarget.releasePointerCapture(e.pointerId);
   }
 
   return (
-    <div ref={containerRef} className="fixed inset-0 z-[60] bg-black overflow-hidden">
+    <div ref={containerRef} className="fixed inset-0 z-[60] bg-black overflow-hidden select-none">
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full bg-black"
@@ -295,6 +339,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
         crossOrigin="use-credentials"
         x-webkit-airplay="allow"
         onClick={() => {
+          if (scrubbing) return;
           const v = videoRef.current;
           if (!v) return;
           if (v.paused) void v.play();
@@ -335,9 +380,6 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                     {ctx.episode.name ? ` — ${ctx.episode.name}` : ''}
                   </div>
                 ) : null}
-                <div className="text-[10px] text-neutral-500 mt-1 uppercase tracking-wider">
-                  {ctx.mode}
-                </div>
               </div>
             </motion.div>
 
@@ -348,37 +390,34 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
               transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               className="absolute inset-x-0 bottom-0 z-10 px-6 pb-6 pt-16 bg-gradient-to-t from-black/85 via-black/40 to-transparent"
             >
-              {/* progress bar */}
               <div
-                className="relative h-2 group/seek mb-3"
-                onMouseMove={onSeekBarMove}
-                onMouseLeave={() => setHoverTime(null)}
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  seek((e.clientX - rect.left) / rect.width);
+                ref={seekBarRef}
+                className="relative h-3 group/seek mb-3 cursor-pointer touch-none"
+                onPointerDown={onSeekPointerDown}
+                onPointerMove={onSeekPointerMove}
+                onPointerUp={onSeekPointerUp}
+                onPointerCancel={onSeekPointerUp}
+                onMouseLeave={() => {
+                  if (!scrubbing) setHoverTime(null);
                 }}
               >
-                <div className="absolute inset-y-0 left-0 right-0 bg-white/20 rounded-full" />
+                <div className="absolute inset-y-1 left-0 right-0 bg-white/20 rounded-full" />
                 <div
-                  className="absolute inset-y-0 left-0 bg-brand rounded-full"
+                  className="absolute inset-y-1 left-0 bg-brand rounded-full"
                   style={{ width: `${progressPct}%` }}
                 />
                 <div
-                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-brand rounded-full shadow-md opacity-0 group-hover/seek:opacity-100 transition-opacity"
+                  className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-brand rounded-full shadow-md transition-opacity ${
+                    scrubbing ? 'opacity-100 scale-110' : 'opacity-0 group-hover/seek:opacity-100'
+                  }`}
                   style={{ left: `${progressPct}%` }}
                 />
                 {thumbStyle && hoverTime !== null ? (
                   <div
-                    className="absolute bottom-full mb-3 pointer-events-none"
-                    style={{
-                      left: hoverX,
-                      transform: 'translateX(-50%)',
-                    }}
+                    className="absolute bottom-full mb-3 pointer-events-none z-20"
+                    style={{ left: hoverX, transform: 'translateX(-50%)' }}
                   >
-                    <div
-                      className="rounded border border-white/20 shadow-2xl"
-                      style={thumbStyle}
-                    />
+                    <div className="rounded border border-white/20 shadow-2xl overflow-hidden" style={thumbStyle} />
                     <div className="text-center text-xs mt-1 text-white drop-shadow">
                       {fmtTime(hoverTime)}
                     </div>
@@ -386,8 +425,8 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                 ) : null}
               </div>
 
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3 flex-wrap">
                   <IconButton
                     onClick={() => {
                       const v = videoRef.current;
@@ -397,19 +436,10 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                   >
                     {playing ? <PauseIcon /> : <PlayIcon />}
                   </IconButton>
-                  <IconButton
-                    onClick={() =>
-                      videoRef.current && (videoRef.current.currentTime = Math.max(0, time - 5))
-                    }
-                  >
+                  <IconButton onClick={() => seekToTime(time - 5)}>
                     <Rewind5 />
                   </IconButton>
-                  <IconButton
-                    onClick={() =>
-                      videoRef.current &&
-                      (videoRef.current.currentTime = Math.min(duration, time + 5))
-                    }
-                  >
+                  <IconButton onClick={() => seekToTime(time + 5)}>
                     <Forward5 />
                   </IconButton>
                   {ctx.prev ? (
@@ -429,9 +459,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                     </IconButton>
                   ) : null}
                   <div className="flex items-center gap-2 ml-2 group/vol">
-                    <IconButton
-                      onClick={() => videoRef.current && (videoRef.current.muted = !muted)}
-                    >
+                    <IconButton onClick={() => videoRef.current && (videoRef.current.muted = !muted)}>
                       {muted || volume === 0 ? <MuteIcon /> : <VolumeIcon />}
                     </IconButton>
                     <input
@@ -450,10 +478,10 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                     />
                   </div>
                   <span className="text-xs text-neutral-300 ml-2 tabular-nums">
-                    {fmtTime(time)} / {fmtTime(duration)}
+                    {fmtTime(displayTime)} / {fmtTime(duration)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Menu
                     label={`${speed}×`}
                     items={SPEEDS.map((s) => ({
@@ -462,30 +490,14 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: Ctx }) {
                       active: s === speed,
                     }))}
                   />
-                  {levels.length > 0 ? (
+                  {ctx.qualities.length > 0 ? (
                     <Menu
-                      label={currentLevel === 'auto' ? 'Auto' : `${levels[currentLevel as number]?.height ?? '?'}p`}
-                      items={[
-                        {
-                          label: 'Auto',
-                          onClick: () => {
-                            handleRef.current?.setLevel(-1);
-                            setCurrentLevel('auto');
-                          },
-                          active: currentLevel === 'auto',
-                        },
-                        ...levels
-                          .slice()
-                          .sort((a, b) => b.height - a.height)
-                          .map((l) => ({
-                            label: `${l.height}p`,
-                            onClick: () => {
-                              handleRef.current?.setLevel(l.index);
-                              setCurrentLevel(l.index);
-                            },
-                            active: currentLevel === l.index,
-                          })),
-                      ]}
+                      label={currentQuality?.label ?? 'Quality'}
+                      items={ctx.qualities.map((q) => ({
+                        label: q.label,
+                        onClick: () => changeQuality(q),
+                        active: q.rung === qualityRung,
+                      }))}
                     />
                   ) : null}
                   <IconButton onClick={() => setShowSubs(true)} title="Subtitles">

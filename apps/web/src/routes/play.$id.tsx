@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
-import { api } from '../lib/api.js';
+import { api, type PlayContext } from '../lib/api.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
 const PlayerView = lazy(() =>
@@ -17,7 +17,7 @@ function PlayPage() {
   const fileId = Number(id);
   const { data, isPending, error } = useQuery({
     queryKey: ['play', id],
-    queryFn: () => api.get(`/api/play/${id}/context`),
+    queryFn: () => api.get<PlayContext>(`/api/play/${id}/context`),
   });
 
   if (isPending) {
@@ -35,7 +35,7 @@ function PlayPage() {
   }
   return (
     <Suspense fallback={<LoadingScreen label="Loading player…" />}>
-      <PlayerView fileId={fileId} ctx={data as any} />
+      <PlayerView fileId={fileId} ctx={data} />
     </Suspense>
   );
 }

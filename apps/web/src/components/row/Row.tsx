@@ -20,9 +20,9 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
   if (titles.length === 0) return null;
 
   return (
-    <section className="group/row relative">
+    <section className="group/row relative overflow-visible">
       <h2 className="px-6 sm:px-8 text-lg sm:text-xl font-semibold mb-3">{heading}</h2>
-      <div className="relative">
+      <div className="relative overflow-visible">
         <button
           onClick={() => scroll(-1)}
           className="hidden md:grid absolute left-0 inset-y-0 z-20 place-items-center w-12 bg-gradient-to-r from-black/80 to-transparent opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-black/40"
@@ -32,7 +32,7 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
         </button>
         <div
           ref={scroller}
-          className="flex gap-3 overflow-x-auto scroll-px-6 sm:scroll-px-8 px-6 sm:px-8 pb-8 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+          className="flex gap-3 overflow-x-auto overflow-y-visible scroll-px-6 sm:scroll-px-8 px-6 sm:px-8 pb-10 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
         >
           {titles.map((t) => (
             <div

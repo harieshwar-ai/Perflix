@@ -86,11 +86,53 @@ export type EpisodeRow = {
   file_id: number | null;
   position: number | null;
   duration: number | null;
+  progress_updated_at?: number | null;
+};
+
+export type PlayTarget = {
+  fileId: number;
+  position: number;
+  action: 'play' | 'resume';
+};
+
+export type QualityOption = {
+  rung: string;
+  height: number;
+  label: string;
+  streamUrl: string;
+};
+
+export type PlayContext = {
+  file: { id: number; duration: number | null; width?: number | null; height?: number | null };
+  title: {
+    id: number;
+    kind: 'movie' | 'series';
+    title: string;
+    backdrop: string | null;
+  } | null;
+  episode: { season: number; episode: number; name: string | null } | null;
+  next: { file_id: number; season: number; episode: number; name: string | null } | null;
+  prev: { file_id: number; season: number; episode: number; name: string | null } | null;
+  subtitles: { id: number; lang: string; label: string | null; source: string; url: string }[];
+  progress: { position: number; duration: number | null } | null;
+  mode: 'direct' | 'remux' | 'transcode';
+  preferDirect: boolean;
+  streamUrl: string;
+  qualities: QualityOption[];
+  defaultQualityRung: string;
+  thumbsMetaUrl: string;
+  thumbsSpriteUrl: string;
 };
 
 export type TitleDetail = Title & {
   episodes?: EpisodeRow[];
-  file?: { file_id: number; position: number | null; duration: number | null };
+  file?: {
+    file_id: number;
+    position: number | null;
+    duration: number | null;
+    progress_updated_at?: number | null;
+  };
+  playTarget?: PlayTarget | null;
 };
 
 export type SubtitleListItem = {

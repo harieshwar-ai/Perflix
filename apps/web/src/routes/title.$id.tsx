@@ -51,16 +51,7 @@ function TitlePage() {
   if (isPending) return <div className="px-8 py-12 text-neutral-500">Loading…</div>;
   if (!data) return <div className="px-8 py-12 text-neutral-500">Not found.</div>;
 
-  const fileToPlay =
-    data.kind === 'movie'
-      ? data.file?.file_id
-      : data.episodes?.find((e) => e.file_id && (e.position ?? 0) > 0)?.file_id ??
-        data.episodes?.find((e) => e.file_id)?.file_id;
-
-  const resumePosition =
-    data.kind === 'movie'
-      ? data.file?.position ?? 0
-      : data.episodes?.find((e) => e.file_id && (e.position ?? 0) > 0)?.position ?? 0;
+  const playTarget = data.playTarget;
 
   function play(fileId?: number | null) {
     if (!fileId) return;
@@ -112,11 +103,11 @@ function TitlePage() {
           ) : null}
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
-              onClick={() => play(fileToPlay)}
-              disabled={!fileToPlay}
+              onClick={() => play(playTarget?.fileId)}
+              disabled={!playTarget?.fileId}
               className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors disabled:opacity-40"
             >
-              <PlayIcon /> {resumePosition > 0 ? 'Resume' : 'Play'}
+              <PlayIcon /> {playTarget?.action === 'resume' ? 'Resume' : 'Play'}
             </button>
             <button
               onClick={() => toggle.mutate()}
