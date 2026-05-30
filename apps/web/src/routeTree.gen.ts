@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TitleIdRouteImport } from './routes/title.$id'
+import { Route as PlayIdRouteImport } from './routes/play.$id'
 import { Route as BrowseKindRouteImport } from './routes/browse.$kind'
 
 const LoginRoute = LoginRouteImport.update({
@@ -29,6 +30,11 @@ const TitleIdRoute = TitleIdRouteImport.update({
   path: '/title/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlayIdRoute = PlayIdRouteImport.update({
+  id: '/play/$id',
+  path: '/play/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BrowseKindRoute = BrowseKindRouteImport.update({
   id: '/browse/$kind',
   path: '/browse/$kind',
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/browse/$kind': typeof BrowseKindRoute
+  '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/browse/$kind': typeof BrowseKindRoute
+  '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/browse/$kind': typeof BrowseKindRoute
+  '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/browse/$kind' | '/title/$id'
+  fullPaths: '/' | '/login' | '/browse/$kind' | '/play/$id' | '/title/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/browse/$kind' | '/title/$id'
-  id: '__root__' | '/' | '/login' | '/browse/$kind' | '/title/$id'
+  to: '/' | '/login' | '/browse/$kind' | '/play/$id' | '/title/$id'
+  id: '__root__' | '/' | '/login' | '/browse/$kind' | '/play/$id' | '/title/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   LoginRoute: typeof LoginRoute
   BrowseKindRoute: typeof BrowseKindRoute
+  PlayIdRoute: typeof PlayIdRoute
   TitleIdRoute: typeof TitleIdRoute
 }
 
@@ -92,6 +102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TitleIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/play/$id': {
+      id: '/play/$id'
+      path: '/play/$id'
+      fullPath: '/play/$id'
+      preLoaderRoute: typeof PlayIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/browse/$kind': {
       id: '/browse/$kind'
       path: '/browse/$kind'
@@ -106,6 +123,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   LoginRoute: LoginRoute,
   BrowseKindRoute: BrowseKindRoute,
+  PlayIdRoute: PlayIdRoute,
   TitleIdRoute: TitleIdRoute,
 }
 export const routeTree = rootRouteImport
