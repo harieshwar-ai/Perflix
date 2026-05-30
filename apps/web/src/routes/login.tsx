@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { useAuthState, useLoginPasskey, useRegisterPasskey } from '../lib/auth.js';
+import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
 export const Route = createFileRoute('/login')({
   component: LoginPage,
@@ -13,7 +14,7 @@ function LoginPage() {
   const login = useLoginPasskey();
   const [deviceName, setDeviceName] = useState('');
 
-  if (isPending) return null;
+  if (isPending) return <LoadingScreen label="Checking session…" />;
 
   const busy = register.isPending || login.isPending;
   const isFirstUser = !auth?.hasUser;
