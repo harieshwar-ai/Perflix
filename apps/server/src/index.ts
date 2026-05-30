@@ -1,6 +1,10 @@
 import Fastify from 'fastify';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import './db/client.js';
+import { registerAuthGate } from './auth/gate.js';
+import { registerAuthRoutes } from './routes/auth.js';
 import { registerLibraryRoutes } from './routes/library.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHlsRoutes } from './routes/hls.js';
@@ -16,7 +20,20 @@ const app = Fastify({
   trustProxy: true,
 });
 
+await app.register(helmet, {
+  contentSecurityPolicy: false, // SPA + HLS make CSP tight; tune in Phase 12
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'same-site' },
+});
+
+await app.register(rateLimit, {
+  global: false,
+});
+
 app.get('/health', async () => ({ ok: true, name: 'perflix', version: '0.1.0' }));
+
+await registerAuthGate(app);
+await registerAuthRoutes(app);
 
 await registerLibraryRoutes(app);
 await registerStreamRoutes(app);
