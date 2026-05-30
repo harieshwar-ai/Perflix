@@ -1,20 +1,29 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { RouterProvider, createRouter } from '@tanstack/react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { routeTree } from './routeTree.gen';
+import { queryClient } from './lib/queryClient.js';
 import './index.css';
 
-function App() {
-  return (
-    <div className="min-h-dvh flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-6xl font-black tracking-tight">PERFLIX</h1>
-        <p className="mt-4 text-neutral-400">Phase 0 bootstrap online.</p>
-      </div>
-    </div>
-  );
+const router = createRouter({
+  routeTree,
+  context: { queryClient },
+  defaultPreload: 'intent',
+  defaultPreloadStaleTime: 0,
+  scrollRestoration: true,
+});
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   </React.StrictMode>,
 );
