@@ -4,6 +4,7 @@ import './db/client.js';
 import { registerLibraryRoutes } from './routes/library.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHlsRoutes } from './routes/hls.js';
+import { registerPreviewRoutes } from './routes/preview.js';
 import { startScanner, stopScanner } from './library/scanner.js';
 import { startCacheSweeper, stopCacheSweeper } from './media/cache.js';
 
@@ -19,6 +20,7 @@ app.get('/health', async () => ({ ok: true, name: 'perflix', version: '0.1.0' })
 await registerLibraryRoutes(app);
 await registerStreamRoutes(app);
 await registerHlsRoutes(app);
+await registerPreviewRoutes(app);
 
 app.post('/api/library/rescan', async () => {
   await stopScanner();
