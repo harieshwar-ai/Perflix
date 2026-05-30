@@ -1,0 +1,25 @@
+{
+  "name": "perflix",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Personal video streaming service",
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev -w @perflix/server\" \"npm:dev -w @perflix/web\"",
+    "build": "npm run build -w @perflix/web && npm run build -w @perflix/server",
+    "start": "node apps/server/dist/index.js",
+    "typecheck": "npm run typecheck -w @perflix/server && npm run typecheck -w @perflix/web",
+    "format": "prettier --write \"apps/*/src/**/*.{ts,tsx,css,json}\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

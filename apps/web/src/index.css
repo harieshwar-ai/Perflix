@@ -1,0 +1,22 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-background: #000;
+  --color-surface: #141414;
+  --color-surface-hi: #1f1f1f;
+  --color-brand: #e50914;
+  --font-display: 'Inter', system-ui, -apple-system, 'SF Pro Display', sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-display);
+  background-color: var(--color-background);
+  color: white;
+  -webkit-font-smoothing: antialiased;
+}
