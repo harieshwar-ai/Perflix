@@ -2,6 +2,7 @@ import { SEG_DURATION, type Rung, totalSegmentsFor } from './jobs.js';
 import type { ProbeResult } from './probe.js';
 
 const RUNG_BW: Record<Rung, number> = {
+  '2160': 14_000_000,
   '1080': 4_700_000,
   '720': 2_700_000,
   '480': 1_200_000,
@@ -9,6 +10,7 @@ const RUNG_BW: Record<Rung, number> = {
 };
 
 const RUNG_RES: Record<Rung, [number, number] | null> = {
+  '2160': [3840, 2160],
   '1080': [1920, 1080],
   '720': [1280, 720],
   '480': [854, 480],

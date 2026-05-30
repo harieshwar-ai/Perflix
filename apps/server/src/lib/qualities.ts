@@ -1,7 +1,8 @@
-import { rungsFor, type Rung } from '../media/jobs.js';
+import { rungsFor, effectiveHeight, type Rung } from '../media/jobs.js';
 import type { ProbeResult } from '../media/probe.js';
 
 const RUNG_HEIGHT: Record<Rung, number> = {
+  '2160': 2160,
   '1080': 1080,
   '720': 720,
   '480': 480,
@@ -21,7 +22,7 @@ export function qualitiesFor(
   probe: ProbeResult,
 ): QualityOption[] {
   if (mode === 'direct') {
-    const h = probe.height ?? 1080;
+    const h = effectiveHeight(probe);
     return [
       {
         rung: 'direct',
@@ -34,7 +35,7 @@ export function qualitiesFor(
 
   const rungs = rungsFor(probe);
   return rungs.map((rung) => {
-    const height = rung === 'src' ? (probe.height ?? 1080) : RUNG_HEIGHT[rung];
+    const height = rung === 'src' ? effectiveHeight(probe) : RUNG_HEIGHT[rung];
     const label = rung === 'src' ? 'Source' : `${height}p`;
     return {
       rung,
@@ -45,9 +46,7 @@ export function qualitiesFor(
   });
 }
 
-/** Default to 1080p when available, otherwise the highest rung. */
+/** Default to the highest available quality rung. */
 export function defaultQuality(qualities: QualityOption[]): QualityOption {
-  const q1080 = qualities.find((q) => q.height === 1080);
-  if (q1080) return q1080;
   return qualities.reduce((best, q) => (q.height > best.height ? q : best), qualities[0]!);
 }

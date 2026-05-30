@@ -47,7 +47,7 @@ async function loadProbed(fileId: number) {
 }
 
 function rungParam(s: string): Rung | null {
-  if (s === '1080' || s === '720' || s === '480' || s === 'src') return s;
+  if (s === '2160' || s === '1080' || s === '720' || s === '480' || s === 'src') return s;
   return null;
 }
 

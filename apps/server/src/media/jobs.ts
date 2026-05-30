@@ -8,7 +8,7 @@ import type { ProbeResult } from './probe.js';
 
 export const SEG_DURATION = 6; // seconds per segment
 
-export type Rung = '1080' | '720' | '480' | 'src';
+export type Rung = '2160' | '1080' | '720' | '480' | 'src';
 type JobStatus = 'starting' | 'running' | 'complete' | 'error';
 
 type Job = {
@@ -26,6 +26,7 @@ type Job = {
 const jobs = new Map<string, Job>();
 
 const RUNG_HEIGHT: Record<Rung, number | null> = {
+  '2160': 2160,
   '1080': 1080,
   '720': 720,
   '480': 480,
@@ -33,6 +34,7 @@ const RUNG_HEIGHT: Record<Rung, number | null> = {
 };
 
 const RUNG_VBR: Record<Rung, string> = {
+  '2160': '12000k',
   '1080': '4500k',
   '720': '2500k',
   '480': '1100k',
@@ -40,6 +42,7 @@ const RUNG_VBR: Record<Rung, string> = {
 };
 
 const RUNG_VMAX: Record<Rung, string> = {
+  '2160': '15000k',
   '1080': '5000k',
   '720': '2800k',
   '480': '1200k',
@@ -58,11 +61,23 @@ export function getJob(fileId: number, rung: Rung): Job | undefined {
   return jobs.get(jobKey(fileId, rung));
 }
 
+/** Infer display height when ffprobe reports width but under-reports height. */
+export function effectiveHeight(probe: ProbeResult): number {
+  const h = probe.height ?? 0;
+  const w = probe.width ?? 0;
+  if (h >= 720) return h;
+  if (w >= 3840) return Math.max(h, 2160);
+  if (w >= 1920) return Math.max(h, 1080);
+  if (w >= 1280) return Math.max(h, 720);
+  return h || 1080;
+}
+
 function ladderForFile(probe: ProbeResult): Rung[] {
   if (probe.mode === 'remux') return ['src'];
   // transcode mode → choose rungs no larger than source height
-  const h = probe.height ?? 1080;
+  const h = effectiveHeight(probe);
   const rungs: Rung[] = [];
+  if (h >= 2160) rungs.push('2160');
   if (h >= 1080) rungs.push('1080');
   if (h >= 720) rungs.push('720');
   rungs.push('480');
