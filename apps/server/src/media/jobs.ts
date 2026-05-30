@@ -61,15 +61,15 @@ export function getJob(fileId: number, rung: Rung): Job | undefined {
   return jobs.get(jobKey(fileId, rung));
 }
 
-/** Infer display height when ffprobe reports width but under-reports height. */
+/** Map probe dimensions to the highest quality tier the source supports. */
 export function effectiveHeight(probe: ProbeResult): number {
   const h = probe.height ?? 0;
   const w = probe.width ?? 0;
-  if (h >= 720) return h;
-  if (w >= 3840) return Math.max(h, 2160);
-  if (w >= 1920) return Math.max(h, 1080);
-  if (w >= 1280) return Math.max(h, 720);
-  return h || 1080;
+  let tier = h;
+  if (w >= 3840) tier = Math.max(tier, 2160);
+  else if (w >= 1920) tier = Math.max(tier, 1080);
+  else if (w >= 1280) tier = Math.max(tier, 720);
+  return tier || 1080;
 }
 
 function ladderForFile(probe: ProbeResult): Rung[] {
