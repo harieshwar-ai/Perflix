@@ -9,14 +9,17 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const hasJsonBody = init?.body !== undefined && init?.body !== null;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...((init?.headers as Record<string, string> | undefined) ?? {}),
+  };
+  if (hasJsonBody) headers['Content-Type'] = 'application/json';
+
   const res = await fetch(path, {
     credentials: 'include',
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
   });
   const contentType = res.headers.get('content-type') ?? '';
   const isJson = contentType.includes('application/json');
