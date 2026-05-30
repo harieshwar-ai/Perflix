@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type Title } from '../lib/api.js';
 import { Hero } from '../components/hero/Hero.js';
 import { Row } from '../components/row/Row.js';
+import { ContinueWatchingRow, type ContinueItem } from '../components/row/ContinueWatchingRow.js';
 
 export const Route = createFileRoute('/')({
   component: HomePage,
@@ -13,12 +14,17 @@ function HomePage() {
     queryKey: ['library'],
     queryFn: () => api.get<{ titles: Title[] }>('/api/library'),
   });
+  const recentProgress = useQuery({
+    queryKey: ['progress', 'recent'],
+    queryFn: () => api.get<{ items: ContinueItem[] }>('/api/progress/recent'),
+  });
 
   if (isPending) {
     return <div className="px-6 py-12 text-neutral-500">Loading library…</div>;
   }
 
   const titles = data?.titles ?? [];
+  const continueItems = recentProgress.data?.items ?? [];
 
   if (titles.length === 0) {
     return (
@@ -45,6 +51,7 @@ function HomePage() {
     <div className="-mt-16">
       <Hero titles={featured} />
       <div className="pt-6 space-y-8 pb-16">
+        {continueItems.length > 0 ? <ContinueWatchingRow items={continueItems} /> : null}
         <Row heading="Recently added" titles={recent} />
         {movies.length > 0 ? <Row heading="Movies" titles={movies} /> : null}
         {series.length > 0 ? <Row heading="Series" titles={series} /> : null}

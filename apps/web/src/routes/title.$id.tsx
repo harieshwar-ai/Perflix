@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { api, type TitleDetail, type EpisodeRow } from '../lib/api.js';
@@ -8,13 +8,35 @@ export const Route = createFileRoute('/title/$id')({
   component: TitlePage,
 });
 
+function useWatchlist(titleId: number) {
+  const qc = useQueryClient();
+  const state = useQuery({
+    queryKey: ['lists', 'state', titleId],
+    queryFn: () => api.get<{ kinds: string[] }>(`/api/lists/state/${titleId}`),
+  });
+  const inList = state.data?.kinds.includes('watchlist') ?? false;
+  const toggle = useMutation({
+    mutationFn: () =>
+      inList
+        ? api.delete(`/api/lists/${titleId}/watchlist`)
+        : api.post(`/api/lists/${titleId}/watchlist`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lists', 'state', titleId] });
+      qc.invalidateQueries({ queryKey: ['lists', 'watchlist'] });
+    },
+  });
+  return { inList, toggle };
+}
+
 function TitlePage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const titleId = Number(id);
   const { data, isPending } = useQuery({
     queryKey: ['title', id],
     queryFn: () => api.get<TitleDetail>(`/api/title/${id}`),
   });
+  const { inList, toggle } = useWatchlist(titleId);
 
   const seasons = useMemo(() => {
     if (!data?.episodes) return [];
@@ -95,6 +117,13 @@ function TitlePage() {
               className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors disabled:opacity-40"
             >
               <PlayIcon /> {resumePosition > 0 ? 'Resume' : 'Play'}
+            </button>
+            <button
+              onClick={() => toggle.mutate()}
+              disabled={toggle.isPending}
+              className="inline-flex items-center gap-2 bg-white/15 backdrop-blur text-white font-semibold px-5 py-2.5 rounded-md hover:bg-white/25 transition-colors"
+            >
+              {inList ? '✓ In My List' : '+ My List'}
             </button>
           </div>
         </div>

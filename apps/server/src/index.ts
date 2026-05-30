@@ -12,6 +12,7 @@ import { registerPreviewRoutes } from './routes/preview.js';
 import { registerSubsRoutes } from './routes/subs.js';
 import { registerPlayRoutes } from './routes/play.js';
 import { registerProgressRoutes } from './routes/progress.js';
+import { registerListsRoutes } from './routes/lists.js';
 import { startScanner, stopScanner } from './library/scanner.js';
 import { startCacheSweeper, stopCacheSweeper } from './media/cache.js';
 
@@ -44,6 +45,7 @@ await registerPreviewRoutes(app);
 await registerSubsRoutes(app);
 await registerPlayRoutes(app);
 await registerProgressRoutes(app);
+await registerListsRoutes(app);
 
 app.post('/api/library/rescan', async () => {
   await stopScanner();
