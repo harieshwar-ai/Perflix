@@ -131,4 +131,12 @@ export async function registerLibraryRoutes(app: FastifyInstance) {
     if (!row?.file_id) return reply.code(404).send({ error: 'no file' });
     return { fileId: row.file_id };
   });
+
+  app.post('/api/library/backfill-art', async (req, reply) => {
+    const { backfillVideoArt } = await import('../media/videoArt.js');
+    void backfillVideoArt(req.log).catch((err) =>
+      req.log.warn({ err: String(err) }, 'manual video art backfill failed'),
+    );
+    return { ok: true, message: 'Video thumbnail backfill started' };
+  });
 }

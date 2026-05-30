@@ -9,6 +9,7 @@ import { classify, type Parsed } from './parser.js';
 import { fetchArt } from './art.js';
 import { probeAndPersist } from '../media/probe.js';
 import { registerLocalSubs } from '../subs/local.js';
+import { syncVideoArt, backfillVideoArt } from '../media/videoArt.js';
 import {
   getMovie,
   getSeason,
@@ -278,11 +279,11 @@ async function ingestFile(absPath: string, ctx: IngestCtx) {
     ctx.log.info({ titleId, epId, fileId: fileRow.id, path: absPath }, 'ingested episode file');
   }
 
-  // probe + register sidecar subs lazily so we don't block ingest pipeline
+  // probe, video thumbnails, and sidecar subs — async so ingest stays fast
   setImmediate(() => {
-    probeAndPersist(fileRow.id, absPath).catch((err) =>
-      ctx.log.warn({ err: String(err), fileId: fileRow.id }, 'probe failed'),
-    );
+    probeAndPersist(fileRow.id, absPath)
+      .then(() => syncVideoArt(fileRow.id, ctx.log))
+      .catch((err) => ctx.log.warn({ err: String(err), fileId: fileRow.id }, 'probe/video-art failed'));
     try {
       const n = registerLocalSubs(fileRow.id, absPath);
       if (n > 0) ctx.log.info({ fileId: fileRow.id, n }, 'registered local subs');
@@ -347,7 +348,12 @@ export async function startScanner(log: FastifyBaseLogger): Promise<void> {
     })
     .on('unlink', (p: string) => removeFile(p, log))
     .on('error', (err: unknown) => log.error({ err: String(err) }, 'watcher error'))
-    .on('ready', () => log.info({ root: config.LIBRARY_ROOT }, 'initial scan complete'));
+    .on('ready', () => {
+      log.info({ root: config.LIBRARY_ROOT }, 'initial scan complete');
+      void backfillVideoArt(log).catch((err) =>
+        log.warn({ err: String(err) }, 'video art backfill failed'),
+      );
+    });
 }
 
 export async function stopScanner(): Promise<void> {
