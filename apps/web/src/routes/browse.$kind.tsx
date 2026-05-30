@@ -1,21 +1,35 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { api, type Title } from '../lib/api.js';
+import type { Title } from '../lib/api.js';
+import {
+  fetchMovies,
+  fetchSeries,
+  libraryMoviesQueryKey,
+  librarySeriesQueryKey,
+} from '../lib/libraryQueries.js';
 import { Tile } from '../components/tile/Tile.js';
+import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
 export const Route = createFileRoute('/browse/$kind')({
+  loader: ({ context: { queryClient }, params }) => {
+    const normalized = params.kind === 'movie' ? 'movie' : 'series';
+    return normalized === 'movie'
+      ? queryClient.ensureQueryData({ queryKey: libraryMoviesQueryKey, queryFn: fetchMovies })
+      : queryClient.ensureQueryData({ queryKey: librarySeriesQueryKey, queryFn: fetchSeries });
+  },
   component: BrowsePage,
 });
 
 function BrowsePage() {
   const { kind } = Route.useParams();
   const normalized = kind === 'movie' ? 'movie' : 'series';
-  const path = normalized === 'movie' ? '/api/library/movies' : '/api/library/series';
+  const queryKey = normalized === 'movie' ? libraryMoviesQueryKey : librarySeriesQueryKey;
+  const queryFn = normalized === 'movie' ? fetchMovies : fetchSeries;
 
   const { data, isPending } = useQuery({
-    queryKey: ['library', normalized],
-    queryFn: () => api.get<{ titles: Title[] }>(path),
+    queryKey,
+    queryFn,
   });
 
   const titles = data?.titles ?? [];
@@ -39,6 +53,10 @@ function BrowsePage() {
           : (a: Title, b: Title) => b.added_at - a.added_at;
     return [...v].sort(cmp);
   }, [titles, genre, sort]);
+
+  if (isPending && !data) {
+    return <LoadingScreen label="Loading…" />;
+  }
 
   return (
     <div className="px-6 sm:px-12 py-8">
@@ -75,9 +93,7 @@ function BrowsePage() {
         </div>
       ) : null}
 
-      {isPending ? (
-        <p className="text-neutral-500">Loading…</p>
-      ) : visible.length === 0 ? (
+      {visible.length === 0 ? (
         <p className="text-neutral-500">Nothing here yet.</p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">

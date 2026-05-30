@@ -1,32 +1,36 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api, type Title } from '../lib/api.js';
+import { fetchLibrary, libraryQueryKey } from '../lib/libraryQueries.js';
 import { Hero } from '../components/hero/Hero.js';
 import { Row } from '../components/row/Row.js';
 import { ContinueWatchingRow, type ContinueItem } from '../components/row/ContinueWatchingRow.js';
+import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
 export const Route = createFileRoute('/')({
+  loader: ({ context: { queryClient } }) =>
+    queryClient.ensureQueryData({ queryKey: libraryQueryKey, queryFn: fetchLibrary }),
   component: HomePage,
 });
 
 function HomePage() {
-  const { data, isPending } = useQuery({
-    queryKey: ['library'],
-    queryFn: () => api.get<{ titles: Title[] }>('/api/library'),
+  const { data, isPending, isFetching } = useQuery({
+    queryKey: libraryQueryKey,
+    queryFn: fetchLibrary,
   });
   const recentProgress = useQuery({
     queryKey: ['progress', 'recent'],
     queryFn: () => api.get<{ items: ContinueItem[] }>('/api/progress/recent'),
   });
 
-  if (isPending) {
-    return <div className="px-6 py-12 text-neutral-500">Loading library…</div>;
+  if (isPending && !data) {
+    return <LoadingScreen label="Loading library…" />;
   }
 
   const titles = data?.titles ?? [];
   const continueItems = recentProgress.data?.items ?? [];
 
-  if (titles.length === 0) {
+  if (titles.length === 0 && !isFetching) {
     return (
       <div className="px-6 py-24 max-w-2xl mx-auto">
         <h2 className="text-3xl font-bold">Your library is empty</h2>
@@ -49,7 +53,7 @@ function HomePage() {
 
   return (
     <div className="-mt-16">
-      <Hero titles={featured} />
+      <Hero titles={featured.length > 0 ? featured : titles.slice(0, 6)} />
       <div className="pt-6 space-y-8 pb-16">
         {continueItems.length > 0 ? <ContinueWatchingRow items={continueItems} /> : null}
         <Row heading="Recently added" titles={recent} />
@@ -65,7 +69,7 @@ function HomePage() {
 
 function pickFeatured(titles: Title[]): Title[] {
   return [...titles]
-    .filter((t) => t.backdrop && t.overview)
+    .filter((t) => t.backdrop || t.poster)
     .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
     .slice(0, 6);
 }
