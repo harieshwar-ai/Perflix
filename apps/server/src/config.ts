@@ -22,6 +22,7 @@ if (existsSync(envFile)) {
     ) {
       value = value.slice(1, -1);
     }
+    if (value.length === 0) continue;
     if (process.env[key] === undefined) process.env[key] = value;
   }
 }

@@ -1,5 +1,8 @@
 import Fastify from 'fastify';
 import { config } from './config.js';
+import './db/client.js';
+import { registerLibraryRoutes } from './routes/library.js';
+import { startScanner, stopScanner } from './library/scanner.js';
 
 const app = Fastify({
   logger: {
@@ -10,13 +13,30 @@ const app = Fastify({
 
 app.get('/health', async () => ({ ok: true, name: 'perflix', version: '0.1.0' }));
 
+await registerLibraryRoutes(app);
+
+app.post('/api/library/rescan', async () => {
+  await stopScanner();
+  await startScanner(app.log);
+  return { ok: true };
+});
+
 const start = async () => {
   try {
     await app.listen({ host: config.HOST, port: config.PORT });
+    await startScanner(app.log);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
   }
 };
+
+const shutdown = async () => {
+  await stopScanner();
+  await app.close();
+  process.exit(0);
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 start();
