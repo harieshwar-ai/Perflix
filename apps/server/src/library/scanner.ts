@@ -8,6 +8,7 @@ import { isMediaFile } from '../lib/paths.js';
 import { classify, type Parsed } from './parser.js';
 import { fetchArt } from './art.js';
 import { probeAndPersist } from '../media/probe.js';
+import { registerLocalSubs } from '../subs/local.js';
 import {
   getMovie,
   getSeason,
@@ -277,11 +278,17 @@ async function ingestFile(absPath: string, ctx: IngestCtx) {
     ctx.log.info({ titleId, epId, fileId: fileRow.id, path: absPath }, 'ingested episode file');
   }
 
-  // probe lazily on a deferred microtask so we don't block ingest pipeline
+  // probe + register sidecar subs lazily so we don't block ingest pipeline
   setImmediate(() => {
     probeAndPersist(fileRow.id, absPath).catch((err) =>
       ctx.log.warn({ err: String(err), fileId: fileRow.id }, 'probe failed'),
     );
+    try {
+      const n = registerLocalSubs(fileRow.id, absPath);
+      if (n > 0) ctx.log.info({ fileId: fileRow.id, n }, 'registered local subs');
+    } catch (err) {
+      ctx.log.warn({ err: String(err), fileId: fileRow.id }, 'local sub scan failed');
+    }
   });
 }
 

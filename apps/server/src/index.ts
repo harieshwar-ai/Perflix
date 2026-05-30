@@ -5,6 +5,7 @@ import { registerLibraryRoutes } from './routes/library.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerHlsRoutes } from './routes/hls.js';
 import { registerPreviewRoutes } from './routes/preview.js';
+import { registerSubsRoutes } from './routes/subs.js';
 import { startScanner, stopScanner } from './library/scanner.js';
 import { startCacheSweeper, stopCacheSweeper } from './media/cache.js';
 
@@ -21,6 +22,7 @@ await registerLibraryRoutes(app);
 await registerStreamRoutes(app);
 await registerHlsRoutes(app);
 await registerPreviewRoutes(app);
+await registerSubsRoutes(app);
 
 app.post('/api/library/rescan', async () => {
   await stopScanner();
