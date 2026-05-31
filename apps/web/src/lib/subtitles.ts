@@ -51,6 +51,12 @@ export function cueAt(cues: VttCue[], t: number): string | null {
   return null;
 }
 
+export function formatSyncSec(sec: number): string {
+  const sign = sec > 0 ? '+' : sec < 0 ? '−' : '';
+  const abs = Math.abs(sec);
+  return `${sign}${abs.toFixed(1)}s`;
+}
+
 export async function fetchSubtitleCues(url: string): Promise<VttCue[]> {
   const res = await fetch(url, { credentials: 'include' });
   if (!res.ok) throw new Error(`subtitle ${res.status}`);

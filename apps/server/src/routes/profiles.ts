@@ -87,7 +87,7 @@ export async function registerProfileRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/profiles/prefs', async (req) => {
-    const keys = ['qualityCap', 'qualityLock', 'audioTrack', 'subtitleStyle'];
+    const keys = ['qualityCap', 'qualityLock', 'audioTrack', 'subtitleStyle', 'subtitleSyncSec'];
     const prefs: Record<string, string | null> = {};
     for (const k of keys) prefs[k] = getPref(req.profileId!, k);
     return { prefs };

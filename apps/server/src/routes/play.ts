@@ -176,6 +176,9 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       }
     }
 
+    const subSyncRaw = getPref(profileId, 'subtitleSyncSec');
+    const subtitleSyncSec = subSyncRaw ? Number(subSyncRaw) : 0;
+
     return {
       file: {
         id: file.file_id,
@@ -207,6 +210,7 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       audioTracks,
       skipMarkers,
       subtitleStyle,
+      subtitleSyncSec: Number.isFinite(subtitleSyncSec) ? subtitleSyncSec : 0,
       profileId,
     };
   });

@@ -65,6 +65,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
   const [subtitleTracks, setSubtitleTracks] = useState(ctx.subtitles);
   const [subCues, setSubCues] = useState<VttCue[]>([]);
   const [subCueText, setSubCueText] = useState<string | null>(null);
+  const [subSyncSec, setSubSyncSec] = useState(ctx.subtitleSyncSec ?? 0);
   const [thumbMeta, setThumbMeta] = useState<ThumbMeta | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number>(0);
@@ -271,6 +272,12 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
     setShowSubs(false);
   }, []);
 
+  const handleSubSyncChange = useCallback((sec: number) => {
+    const rounded = Math.round(Math.max(-30, Math.min(30, sec)) * 10) / 10;
+    setSubSyncSec(rounded);
+    void api.post('/api/profiles/prefs', { key: 'subtitleSyncSec', value: String(rounded) });
+  }, []);
+
   useEffect(() => {
     if (currentSub === 'off') {
       setSubCues([]);
@@ -300,8 +307,8 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       setSubCueText(null);
       return;
     }
-    setSubCueText(cueAt(subCues, time));
-  }, [time, subCues, currentSub]);
+    setSubCueText(cueAt(subCues, time - subSyncSec));
+  }, [time, subCues, currentSub, subSyncSec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -761,6 +768,8 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
         current={currentSub}
         profileId={ctx.profileId}
         initialStyle={ctx.subtitleStyle}
+        syncSec={subSyncSec}
+        onSyncChange={handleSubSyncChange}
         onSelect={handleSubSelect}
       />
     </div>

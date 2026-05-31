@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, type OsSearchResult, type SubtitleListItem } from '../../lib/api.js';
+import { formatSyncSec } from '../../lib/subtitles.js';
 
 type SubStyle = {
   font?: string;
@@ -18,6 +19,8 @@ type Props = {
   onClose: () => void;
   current: number | 'off';
   initialStyle?: SubStyle | null;
+  syncSec: number;
+  onSyncChange: (sec: number) => void;
   onSelect: (subId: number | 'off', sub?: SubtitleListItem) => void;
 };
 
@@ -28,6 +31,8 @@ export function SubtitlePicker({
   onClose,
   current,
   initialStyle,
+  syncSec,
+  onSyncChange,
   onSelect,
 }: Props) {
   const qc = useQueryClient();
@@ -134,6 +139,54 @@ export function SubtitlePicker({
                   </span>
                 </label>
               ))}
+            </div>
+
+            <div className="border-t border-white/5 pt-4 mb-6">
+              <h3 className="text-sm font-semibold mb-3">Sync</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onSyncChange(syncSec - 0.5)}
+                  className="text-xs bg-white/10 hover:bg-white/15 rounded px-2.5 py-1.5"
+                >
+                  −0.5s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSyncChange(syncSec - 0.1)}
+                  className="text-xs bg-white/10 hover:bg-white/15 rounded px-2.5 py-1.5"
+                >
+                  −0.1s
+                </button>
+                <span className="min-w-[4.5rem] text-center text-sm tabular-nums font-medium">
+                  {formatSyncSec(syncSec)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onSyncChange(syncSec + 0.1)}
+                  className="text-xs bg-white/10 hover:bg-white/15 rounded px-2.5 py-1.5"
+                >
+                  +0.1s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSyncChange(syncSec + 0.5)}
+                  className="text-xs bg-white/10 hover:bg-white/15 rounded px-2.5 py-1.5"
+                >
+                  +0.5s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSyncChange(0)}
+                  disabled={syncSec === 0}
+                  className="text-xs text-neutral-400 hover:text-white disabled:opacity-40 ml-auto"
+                >
+                  Reset
+                </button>
+              </div>
+              <p className="text-[11px] text-neutral-500 mt-2">
+                Positive delays subtitles; negative shows them earlier.
+              </p>
             </div>
 
             <div className="border-t border-white/5 pt-4 mb-6">

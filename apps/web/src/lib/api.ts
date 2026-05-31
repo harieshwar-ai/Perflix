@@ -141,6 +141,7 @@ export type PlayContext = {
   audioTracks: { lang: string; label: string; rung: string; url: string }[];
   skipMarkers: { kind: 'intro' | 'recap' | 'credits'; startSec: number; endSec: number; confidence: number | null }[];
   subtitleStyle: Record<string, string> | null;
+  subtitleSyncSec: number;
   profileId: number;
 };
 
