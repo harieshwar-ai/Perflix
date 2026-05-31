@@ -1,6 +1,8 @@
 import { useRef } from 'react';
+import { motion } from 'framer-motion';
 import { Tile } from '../tile/Tile.js';
 import type { Title } from '../../lib/api.js';
+import { rowContainer, rowItem } from '../../lib/motion.js';
 
 type Props = {
   heading: string;
@@ -20,8 +22,16 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
   if (titles.length === 0) return null;
 
   return (
-    <section className="group/row relative overflow-visible">
-      <h2 className="px-6 sm:px-8 text-lg sm:text-xl font-semibold mb-3">{heading}</h2>
+    <motion.section
+      className="group/row relative overflow-visible"
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.15 }}
+      variants={rowContainer}
+    >
+      <motion.h2 variants={rowItem} className="px-6 sm:px-8 text-lg sm:text-xl font-semibold mb-3">
+        {heading}
+      </motion.h2>
       <div className="relative overflow-visible">
         <button
           onClick={() => scroll(-1)}
@@ -30,13 +40,14 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
         >
           <ChevronLeft />
         </button>
-        <div
+        <motion.div
           ref={scroller}
           className="flex gap-3 overflow-x-auto overflow-y-visible scroll-px-6 sm:scroll-px-8 px-6 sm:px-8 pb-10 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
         >
           {titles.map((t) => (
-            <div
+            <motion.div
               key={t.id}
+              variants={rowItem}
               className={
                 variant === 'landscape'
                   ? 'shrink-0 w-[280px] sm:w-[320px]'
@@ -44,9 +55,9 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
               }
             >
               <Tile title={t} variant={variant} />
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
         <button
           onClick={() => scroll(1)}
           className="hidden md:grid absolute right-0 inset-y-0 z-20 place-items-center w-12 bg-gradient-to-l from-black/80 to-transparent opacity-0 group-hover/row:opacity-100 transition-opacity hover:bg-black/40"
@@ -55,7 +66,7 @@ export function Row({ heading, titles, variant = 'poster' }: Props) {
           <ChevronRight />
         </button>
       </div>
-    </section>
+    </motion.section>
   );
 }
 

@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { motion } from 'framer-motion';
+import { rowContainer, rowItem } from '../../lib/motion.js';
+import { PosterImage } from '../ui/PosterImage.js';
 
 export type ContinueItem = {
   fileId: number;
@@ -25,8 +27,16 @@ export function ContinueWatchingRow({ items }: { items: ContinueItem[] }) {
   const navigate = useNavigate();
   if (items.length === 0) return null;
   return (
-    <section className="group/row">
-      <h2 className="px-6 sm:px-8 text-lg sm:text-xl font-semibold mb-3">Continue watching</h2>
+    <motion.section
+      className="group/row"
+      initial="hidden"
+      whileInView="visible"
+      viewport={{ once: true, amount: 0.2 }}
+      variants={rowContainer}
+    >
+      <motion.h2 variants={rowItem} className="px-6 sm:px-8 text-lg sm:text-xl font-semibold mb-3">
+        Continue watching
+      </motion.h2>
       <div
         ref={scroller}
         className="flex gap-3 overflow-x-auto px-6 sm:px-8 pb-6 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
@@ -36,21 +46,17 @@ export function ContinueWatchingRow({ items }: { items: ContinueItem[] }) {
           if (!t) return null;
           const pct = it.duration ? Math.min(100, (it.position / it.duration) * 100) : 0;
           const remain = it.duration ? it.duration - it.position : null;
+          const art = t.backdrop ?? t.poster;
           return (
             <motion.button
               key={it.fileId}
+              variants={rowItem}
               whileHover={{ scale: 1.03 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
               onClick={() => navigate({ to: `/play/${it.fileId}` })}
               className="shrink-0 w-[280px] sm:w-[320px] aspect-video rounded-md overflow-hidden relative bg-neutral-900 text-left shadow-md"
             >
-              {t.backdrop || t.poster ? (
-                <img
-                  src={t.backdrop ?? t.poster ?? ''}
-                  alt={t.title}
-                  className="absolute inset-0 w-full h-full object-cover"
-                />
-              ) : null}
+              {art ? <PosterImage src={art} alt={t.title} /> : null}
               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-3">
                 <div className="text-sm font-semibold truncate">
@@ -78,6 +84,6 @@ export function ContinueWatchingRow({ items }: { items: ContinueItem[] }) {
           );
         })}
       </div>
-    </section>
+    </motion.section>
   );
 }

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from '@tanstack/react-router';
 import { api, type Title } from '../../lib/api.js';
+import { springSnappy } from '../../lib/motion.js';
+import { PosterImage } from '../ui/PosterImage.js';
 
 type Props = {
   title: Title;
@@ -11,7 +13,6 @@ type Props = {
 
 const HOVER_DELAY_MS = 500;
 const LONG_PRESS_MS = 450;
-const spring = { type: 'spring' as const, stiffness: 420, damping: 32, mass: 0.85 };
 
 export function Tile({ title, variant = 'poster', hoverPreview = true }: Props) {
   const navigate = useNavigate();
@@ -111,18 +112,11 @@ export function Tile({ title, variant = 'poster', hoverPreview = true }: Props) 
         layout="position"
         className={`relative ${aspect} rounded-md overflow-hidden bg-neutral-900 shadow-lg will-change-transform`}
         animate={{ scale: expanded ? 1.16 : 1 }}
-        transition={spring}
+        transition={springSnappy}
         style={{ originY: 0.5 }}
       >
         {imageSrc ? (
-          <img
-            src={imageSrc}
-            alt={title.title}
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-          />
+          <PosterImage src={imageSrc} alt={title.title} />
         ) : (
           <div className="absolute inset-0 grid place-items-center text-xs text-neutral-500 p-2 text-center">
             {title.title}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
-import { api, type PlayTarget, type Title } from '../../lib/api.js';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type PlayContext, type PlayTarget, type Title } from '../../lib/api.js';
+import { PosterImage } from '../ui/PosterImage.js';
 
 type Props = { titles: Title[] };
 
@@ -10,8 +11,12 @@ const ROTATE_MS = 8000;
 
 export function Hero({ titles }: Props) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const featured = titles.filter((t) => t.backdrop || t.poster).slice(0, 6);
   const [idx, setIdx] = useState(0);
+  const safeIdx = featured.length > 0 ? idx % featured.length : 0;
+  const cur = featured[safeIdx];
+  const heroArt = cur ? (cur.backdrop ?? cur.poster) : null;
 
   useEffect(() => {
     if (featured.length <= 1) return;
@@ -19,14 +24,14 @@ export function Hero({ titles }: Props) {
     return () => window.clearInterval(t);
   }, [featured.length]);
 
-  if (featured.length === 0) return null;
-  const cur = featured[idx]!;
-
   const { data: playTarget } = useQuery({
-    queryKey: ['play-target', cur.id],
-    queryFn: () => api.get<PlayTarget>(`/api/title/${cur.id}/play-target`),
+    queryKey: ['play-target', cur?.id ?? 0],
+    queryFn: () => api.get<PlayTarget>(`/api/title/${cur!.id}/play-target`),
+    enabled: Boolean(cur?.id),
     retry: false,
   });
+
+  if (!cur) return null;
 
   return (
     <div className="relative w-full h-[75vh] min-h-[420px] overflow-hidden">
@@ -39,15 +44,12 @@ export function Hero({ titles }: Props) {
           transition={{ duration: 1.2, ease: [0.4, 0, 0.2, 1] }}
           className="absolute inset-0"
         >
-          {cur.backdrop ? (
-            <motion.img
-              initial={{ scale: 1.06 }}
-              animate={{ scale: 1 }}
-              transition={{ duration: 8, ease: 'linear' }}
-              src={cur.backdrop}
+          {heroArt ? (
+            <PosterImage
+              src={heroArt}
               alt={cur.title}
-              className="absolute inset-0 w-full h-full object-cover"
-              fetchPriority="high"
+              priority
+              imgClassName="absolute inset-0 w-full h-full object-cover"
             />
           ) : null}
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
@@ -72,7 +74,7 @@ export function Hero({ titles }: Props) {
               {cur.year ? <span>{cur.year}</span> : null}
               {cur.runtime ? <span>{cur.runtime} min</span> : null}
               {cur.rating ? <span>★ {cur.rating.toFixed(1)}</span> : null}
-              {cur.genres.slice(0, 3).map((g) => (
+              {cur.genres?.slice(0, 3).map((g) => (
                 <span key={g} className="border border-white/20 px-2 py-0.5 rounded">
                   {g}
                 </span>
@@ -86,7 +88,14 @@ export function Hero({ titles }: Props) {
             <div className="mt-6 flex items-center gap-3">
               <button
                 disabled={!playTarget}
-                onClick={() => playTarget && void navigate({ to: `/play/${playTarget.fileId}` })}
+                onClick={() => {
+                  if (!playTarget) return;
+                  void queryClient.prefetchQuery({
+                    queryKey: ['play', String(playTarget.fileId)],
+                    queryFn: () => api.get<PlayContext>(`/api/play/${playTarget.fileId}/context`),
+                  });
+                  void navigate({ to: `/play/${playTarget.fileId}` });
+                }}
                 className="inline-flex items-center gap-2 bg-white text-black font-semibold px-6 py-2.5 rounded-md hover:bg-white/90 transition-colors disabled:opacity-40"
               >
                 <PlayIcon /> {playTarget?.action === 'resume' ? 'Resume' : 'Play'}

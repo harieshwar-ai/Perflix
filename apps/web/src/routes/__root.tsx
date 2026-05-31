@@ -6,8 +6,10 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { QueryClient } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect } from 'react';
 import { useAuthState, useLogout } from '../lib/auth.js';
+import { pageTransition, pageVariants } from '../lib/motion.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 import { TmdbAttribution } from '../components/ui/TmdbAttribution.js';
 
@@ -43,7 +45,22 @@ function RootLayout() {
     <div className="min-h-dvh bg-black text-white flex flex-col">
       {showChrome && !isPlayer ? <TopNav onLogout={() => logout.mutate()} /> : null}
       <main className={`flex-1 ${showChrome && !isPlayer ? 'pt-16' : ''}`}>
-        <Outlet />
+        {isPlayer ? (
+          <Outlet />
+        ) : (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={pathname}
+              variants={pageVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              transition={pageTransition}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
+        )}
       </main>
       {showChrome && !isPlayer ? <TmdbAttribution /> : null}
     </div>

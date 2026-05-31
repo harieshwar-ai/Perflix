@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { api, type TitleDetail, type EpisodeRow } from '../lib/api.js';
+import { fadeUp } from '../lib/motion.js';
+import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
 export const Route = createFileRoute('/title/$id')({
   component: TitlePage,
@@ -48,8 +50,8 @@ function TitlePage() {
   const [activeSeason, setActiveSeason] = useState<number | null>(null);
   const season = activeSeason ?? seasons[0] ?? null;
 
-  if (isPending) return <div className="px-8 py-12 text-neutral-500">Loading…</div>;
-  if (!data) return <div className="px-8 py-12 text-neutral-500">Not found.</div>;
+  if (isPending) return <LoadingScreen label="Loading title…" />;
+  if (!data) return <LoadingScreen label="Title not found" />;
 
   const playTarget = data.playTarget;
 
@@ -59,7 +61,7 @@ function TitlePage() {
   }
 
   return (
-    <div>
+    <motion.div {...fadeUp}>
       <div className="relative h-[60vh] min-h-[360px] overflow-hidden -mt-16">
         {data.backdrop ? (
           <img
@@ -146,7 +148,7 @@ function TitlePage() {
           </ul>
         </div>
       ) : null}
-    </div>
+    </motion.div>
   );
 }
 

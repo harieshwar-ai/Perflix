@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
 import { api, type Title } from '../lib/api.js';
 import { fetchLibrary, libraryQueryKey } from '../lib/libraryQueries.js';
+import { fadeUp } from '../lib/motion.js';
 import { Hero } from '../components/hero/Hero.js';
 import { Row } from '../components/row/Row.js';
 import { ContinueWatchingRow, type ContinueItem } from '../components/row/ContinueWatchingRow.js';
@@ -23,11 +25,16 @@ function HomePage() {
     queryFn: () => api.get<{ items: ContinueItem[] }>('/api/progress/recent'),
   });
 
+  const titles = data?.titles ?? [];
+  const featured = pickFeatured(titles);
+
   if (isPending && !data) {
     return <LoadingScreen label="Loading library…" />;
   }
+  if (recentProgress.isPending && !recentProgress.data) {
+    return <LoadingScreen label="Loading your picks…" />;
+  }
 
-  const titles = data?.titles ?? [];
   const continueItems = recentProgress.data?.items ?? [];
 
   if (titles.length === 0 && !isFetching) {
@@ -45,14 +52,13 @@ function HomePage() {
     );
   }
 
-  const featured = pickFeatured(titles);
   const recent = [...titles].sort((a, b) => b.added_at - a.added_at).slice(0, 18);
   const movies = titles.filter((t) => t.kind === 'movie').slice(0, 18);
   const series = titles.filter((t) => t.kind === 'series').slice(0, 18);
   const byGenre = groupByGenre(titles);
 
   return (
-    <div className="-mt-16">
+    <motion.div className="-mt-16" {...fadeUp}>
       <Hero titles={featured.length > 0 ? featured : titles.slice(0, 6)} />
       <div className="pt-6 space-y-8 pb-16">
         {continueItems.length > 0 ? <ContinueWatchingRow items={continueItems} /> : null}
@@ -63,7 +69,7 @@ function HomePage() {
           <Row key={genre} heading={genre} titles={list} />
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }
 

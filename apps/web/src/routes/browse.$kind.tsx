@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import type { Title } from '../lib/api.js';
 import {
   fetchMovies,
@@ -8,6 +9,7 @@ import {
   libraryMoviesQueryKey,
   librarySeriesQueryKey,
 } from '../lib/libraryQueries.js';
+import { fadeUp, staggerContainer, staggerItem } from '../lib/motion.js';
 import { Tile } from '../components/tile/Tile.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 
@@ -59,7 +61,7 @@ function BrowsePage() {
   }
 
   return (
-    <div className="px-6 sm:px-12 py-8">
+    <motion.div className="px-6 sm:px-12 py-8" {...fadeUp}>
       <div className="flex items-end justify-between flex-wrap gap-4 mb-8">
         <h1 className="text-3xl sm:text-4xl font-black tracking-tight">
           {normalized === 'movie' ? 'Movies' : 'Series'}
@@ -96,13 +98,20 @@ function BrowsePage() {
       {visible.length === 0 ? (
         <p className="text-neutral-500">Nothing here yet.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <motion.div
+          className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4"
+          variants={staggerContainer}
+          initial="hidden"
+          animate="visible"
+        >
           {visible.map((t) => (
-            <Tile key={t.id} title={t} />
+            <motion.div key={t.id} variants={staggerItem}>
+              <Tile title={t} />
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
