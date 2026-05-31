@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.js';
 import { defaultQuality, qualitiesFor } from '../lib/qualities.js';
+import { prewarmPlayback, SEG_DURATION, type Rung } from '../media/jobs.js';
+import { playbackStartSec, segmentIndexForResume } from '../media/keyframes.js';
 import { probeAndPersist } from '../media/probe.js';
 
 const findFile = db.prepare(`
@@ -47,6 +49,16 @@ const findSubs = db.prepare(`
 const findProgress = db.prepare(`
   SELECT position, duration FROM progress WHERE user_id = ? AND file_id = ?
 `);
+
+function resumeStartSec(
+  progress: { position: number; duration: number | null } | null,
+  fileDuration: number,
+): number {
+  const pos = progress?.position ?? 0;
+  if (pos <= 30) return 0;
+  if (fileDuration > 0 && pos / fileDuration >= 0.95) return 0;
+  return pos;
+}
 
 export async function registerPlayRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/api/play/:id/context', async (req, reply) => {
@@ -132,6 +144,20 @@ export async function registerPlayRoutes(app: FastifyInstance) {
     }
     if (episode && episode['still']) episode['still'] = `/art/${episode['still']}`;
 
+    const resumeSec = resumeStartSec(progress, probe.duration ?? file.duration ?? 0);
+    const snappedStart = playbackStartSec(resumeSec);
+    const startSeg = segmentIndexForResume(resumeSec);
+    let warm: { playlist: string; segment: string } | null = null;
+    if (!preferDirect && selected.rung !== 'direct') {
+      const rung = selected.rung as Rung;
+      prewarmPlayback(id, rung, file.path, probe, startSeg, req.log);
+      const startQuery = snappedStart > 0 ? `?start=${Math.floor(snappedStart)}` : '';
+      warm = {
+        playlist: `${selected.streamUrl}${startQuery}`,
+        segment: `/hls/${id}/${rung}/seg_${startSeg}.ts`,
+      };
+    }
+
     return {
       file: {
         id: file.file_id,
@@ -152,6 +178,9 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       defaultQualityRung: selected.rung,
       thumbsMetaUrl: `/thumbs/${id}/meta.json`,
       thumbsSpriteUrl: `/thumbs/${id}/sprite.jpg`,
+      segmentDuration: SEG_DURATION,
+      playbackStartSec: snappedStart,
+      warm,
     };
   });
 }

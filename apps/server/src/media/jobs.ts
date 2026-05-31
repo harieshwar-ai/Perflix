@@ -1,29 +1,42 @@
-import { mkdirSync, existsSync, statSync, watch as fsWatch } from 'node:fs';
+import {
+  mkdirSync,
+  existsSync,
+  statSync,
+  rmSync,
+  readdirSync,
+  watch as fsWatch,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { FastifyBaseLogger } from 'fastify';
 import { hlsCacheDir } from '../lib/paths.js';
-import { spawnFfmpeg } from '../lib/ffmpeg.js';
+import { fmtSeconds, spawnFfmpeg } from '../lib/ffmpeg.js';
+import { SEEK_PREROLL_SEC, segmentStartSec } from './keyframes.js';
 import type { ProbeResult } from './probe.js';
 
-export const SEG_DURATION = 6; // seconds per segment
+export const SEG_DURATION = 4; // seconds per segment — shorter = faster first segment on transcode start
+
+/** Invalidate on-disk HLS when the session encoding model changes. */
+const SESSION_CACHE_VERSION = 8;
 
 export type Rung = '2160' | '1080' | '720' | '480' | 'src';
-type JobStatus = 'starting' | 'running' | 'complete' | 'error';
+type SessionStatus = 'starting' | 'running' | 'complete' | 'error' | 'cancelled';
 
-type Job = {
+export type TranscodeSession = {
   fileId: number;
   rung: Rung;
   dir: string;
   child: ChildProcess | null;
-  status: JobStatus;
+  status: SessionStatus;
   startedAt: number;
   lastAccess: number;
+  startSegment: number;
   totalSegments: number;
   error?: string;
 };
 
-const jobs = new Map<string, Job>();
+const sessions = new Map<string, TranscodeSession>();
 
 const RUNG_HEIGHT: Record<Rung, number | null> = {
   '2160': 2160,
@@ -33,32 +46,69 @@ const RUNG_HEIGHT: Record<Rung, number | null> = {
   src: null,
 };
 
-const RUNG_VBR: Record<Rung, string> = {
-  '2160': '12000k',
-  '1080': '4500k',
-  '720': '2500k',
-  '480': '1100k',
-  src: '4500k',
+/** Target / peak video bitrates — tuned for high-quality personal streaming (not CDN-style caps). */
+export const RUNG_ENCODE: Record<
+  Rung,
+  { vbr: string; vmax: string; bufsize: string; abr: string; bandwidth: number }
+> = {
+  '2160': { vbr: '22000k', vmax: '30000k', bufsize: '60000k', abr: '384k', bandwidth: 24_000_000 },
+  '1080': { vbr: '12000k', vmax: '16000k', bufsize: '32000k', abr: '384k', bandwidth: 13_000_000 },
+  '720': { vbr: '6000k', vmax: '8000k', bufsize: '16000k', abr: '256k', bandwidth: 6_500_000 },
+  '480': { vbr: '2500k', vmax: '3500k', bufsize: '7000k', abr: '192k', bandwidth: 2_800_000 },
+  src: { vbr: '12000k', vmax: '16000k', bufsize: '32000k', abr: '384k', bandwidth: 13_000_000 },
 };
 
-const RUNG_VMAX: Record<Rung, string> = {
-  '2160': '15000k',
-  '1080': '5000k',
-  '720': '2800k',
-  '480': '1200k',
-  src: '5000k',
-};
-
-function jobKey(fileId: number, rung: Rung): string {
+function sessionKey(fileId: number, rung: Rung): string {
   return `${fileId}/${rung}`;
 }
 
-function jobDir(fileId: number, rung: Rung): string {
+function sessionDir(fileId: number, rung: Rung): string {
   return resolve(hlsCacheDir, String(fileId), rung);
 }
 
-export function getJob(fileId: number, rung: Rung): Job | undefined {
-  return jobs.get(jobKey(fileId, rung));
+function versionMarker(dir: string): string {
+  return resolve(dir, `.session-v${SESSION_CACHE_VERSION}`);
+}
+
+function ensureCacheVersion(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  if (existsSync(versionMarker(dir))) return;
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best effort
+  }
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(versionMarker(dir), '');
+}
+
+function clearEncodedSegments(dir: string): void {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith('seg_') || name === 'playlist.m3u8') {
+        rmSync(resolve(dir, name), { force: true });
+      }
+    }
+  } catch {
+    // best effort
+  }
+}
+
+function highestEncodedSegment(dir: string): number | null {
+  let max: number | null = null;
+  try {
+    for (const name of readdirSync(dir)) {
+      const idx = parseSegmentIndex(name);
+      if (idx !== null && (max === null || idx > max)) max = idx;
+    }
+  } catch {
+    // best effort
+  }
+  return max;
+}
+
+export function getSession(fileId: number, rung: Rung): TranscodeSession | undefined {
+  return sessions.get(sessionKey(fileId, rung));
 }
 
 /** Map probe dimensions to the highest quality tier the source supports. */
@@ -74,7 +124,6 @@ export function effectiveHeight(probe: ProbeResult): number {
 
 function ladderForFile(probe: ProbeResult): Rung[] {
   if (probe.mode === 'remux') return ['src'];
-  // transcode mode → choose rungs no larger than source height
   const h = effectiveHeight(probe);
   const rungs: Rung[] = [];
   if (h >= 2160) rungs.push('2160');
@@ -92,25 +141,141 @@ export function totalSegmentsFor(duration: number): number {
   return Math.max(1, Math.ceil(duration / SEG_DURATION));
 }
 
-export function startJob(
+export function parseSegmentIndex(segName: string): number | null {
+  const m = /^seg_(\d+)\.ts$/.exec(segName);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+export function segmentIndexForTime(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return Math.floor(seconds / SEG_DURATION);
+}
+
+function stopSession(session: TranscodeSession): void {
+  if (session.child) {
+    session.child.kill('SIGTERM');
+    session.child = null;
+  }
+  session.status = 'cancelled';
+}
+
+function buildSessionArgs(
+  input: string,
+  dir: string,
+  rung: Rung,
+  probe: ProbeResult,
+  startSegment: number,
+): string[] {
+  const segmentStart = segmentStartSec(startSegment);
+  const coarseSec = Math.max(0, segmentStart - SEEK_PREROLL_SEC);
+  const fineSec = segmentStart - coarseSec;
+  const segPath = resolve(dir, 'seg_%d.ts');
+  const playlist = resolve(dir, 'playlist.m3u8');
+
+  const args: string[] = ['-hide_banner', '-loglevel', 'warning', '-y'];
+  // Coarse input seek for speed, short fine seek after -i for segment-boundary accuracy + A/V sync.
+  if (coarseSec > 0) args.push('-ss', fmtSeconds(coarseSec));
+  if (probe.vcodec === 'hevc' || probe.vcodec === 'h265') {
+    args.push('-hwaccel', 'videotoolbox');
+  }
+  args.push('-fflags', '+genpts', '-i', input);
+  if (fineSec > 0.05) args.push('-ss', fmtSeconds(fineSec));
+  args.push(
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0?',
+    '-avoid_negative_ts',
+    'make_zero',
+    '-max_muxing_queue_size',
+    '4096',
+  );
+
+  if (probe.mode === 'remux') {
+    args.push('-c', 'copy');
+  } else {
+    const enc = RUNG_ENCODE[rung];
+    const height = RUNG_HEIGHT[rung];
+    const srcH = effectiveHeight(probe);
+    if (height && srcH > height) {
+      args.push('-vf', `scale=-2:${height}:flags=lanczos`);
+    }
+    const level = height && height >= 2160 ? '5.1' : '4.2';
+    args.push(
+      '-c:v',
+      'h264_videotoolbox',
+      '-b:v',
+      enc.vbr,
+      '-maxrate',
+      enc.vmax,
+      '-bufsize',
+      enc.bufsize,
+      '-profile:v',
+      'high',
+      '-level:v',
+      level,
+      '-pix_fmt',
+      'yuv420p',
+      '-fps_mode',
+      'cfr',
+      '-force_key_frames',
+      `expr:gte(t,n_forced*${SEG_DURATION})`,
+    );
+    args.push(
+      '-af',
+      'aresample=async=1:first_pts=0',
+      '-c:a',
+      'aac',
+      '-b:a',
+      enc.abr,
+      '-ac',
+      '2',
+    );
+  }
+
+  args.push(
+    '-f',
+    'hls',
+    '-hls_time',
+    String(SEG_DURATION),
+    '-hls_playlist_type',
+    'vod',
+    '-hls_flags',
+    'independent_segments+temp_file',
+    '-hls_segment_type',
+    'mpegts',
+    '-start_number',
+    String(startSegment),
+    '-hls_segment_filename',
+    segPath,
+    playlist,
+  );
+  return args;
+}
+
+function startSession(
   fileId: number,
   rung: Rung,
   absPath: string,
   probe: ProbeResult,
+  startSegment: number,
   log: FastifyBaseLogger,
-): Job {
-  const key = jobKey(fileId, rung);
-  const existing = jobs.get(key);
-  if (existing && existing.status !== 'error') {
-    existing.lastAccess = Date.now();
-    return existing;
-  }
+): TranscodeSession {
+  const key = sessionKey(fileId, rung);
+  const existing = sessions.get(key);
+  if (existing) stopSession(existing);
 
-  const dir = jobDir(fileId, rung);
-  mkdirSync(dir, { recursive: true });
+  const dir = sessionDir(fileId, rung);
+  ensureCacheVersion(dir);
+  const headSeg = resolve(dir, `seg_${startSegment}.ts`);
+  const hasHead = existsSync(headSeg) && statSync(headSeg).size > 0;
+  if (!hasHead) clearEncodedSegments(dir);
 
   const totalSegments = totalSegmentsFor(probe.duration);
-  const job: Job = {
+  const segmentStart = segmentStartSec(startSegment);
+  const session: TranscodeSession = {
     fileId,
     rung,
     dir,
@@ -118,17 +283,21 @@ export function startJob(
     status: 'starting',
     startedAt: Date.now(),
     lastAccess: Date.now(),
+    startSegment,
     totalSegments,
   };
-  jobs.set(key, job);
+  sessions.set(key, session);
 
-  const args = buildFfmpegArgs(absPath, dir, rung, probe);
-  log.info({ fileId, rung, mode: probe.mode, totalSegments }, 'starting hls job');
-  log.debug({ args }, 'ffmpeg args');
+  const args = buildSessionArgs(absPath, dir, rung, probe, startSegment);
+  log.info(
+    { fileId, rung, mode: probe.mode, startSegment, segmentStart, totalSegments },
+    'starting hls session',
+  );
+  log.debug({ args }, 'ffmpeg session args');
 
   const child = spawnFfmpeg(args);
-  job.child = child;
-  job.status = 'running';
+  session.child = child;
+  session.status = 'running';
 
   let stderrBuf = '';
   child.stderr?.on('data', (d) => {
@@ -137,83 +306,77 @@ export function startJob(
   });
 
   child.once('error', (err) => {
-    job.status = 'error';
-    job.error = String(err);
+    if (session.status === 'cancelled') return;
+    session.status = 'error';
+    session.error = String(err);
     log.error({ fileId, rung, err: String(err) }, 'ffmpeg spawn error');
   });
 
-  child.once('close', (code) => {
+  child.once('close', (code, signal) => {
+    session.child = null;
+    if (signal === 'SIGTERM' || session.status === 'cancelled') return;
     if (code === 0) {
-      job.status = 'complete';
-      log.info({ fileId, rung }, 'hls job complete');
-    } else if (job.status !== 'error') {
-      job.status = 'error';
-      job.error = stderrBuf.slice(-1000);
-      log.error({ fileId, rung, code, tail: job.error }, 'ffmpeg exited non-zero');
+      session.status = 'complete';
+      log.info({ fileId, rung, startSegment }, 'hls session complete');
+    } else if (session.status !== 'error') {
+      session.status = 'error';
+      session.error = stderrBuf.slice(-1000);
+      log.error({ fileId, rung, code, tail: session.error }, 'ffmpeg session failed');
     }
-    job.child = null;
   });
 
-  return job;
+  return session;
 }
 
-function buildFfmpegArgs(
-  input: string,
-  dir: string,
+/**
+ * Ensure a continuous HLS encode session exists that will produce `segIndex`.
+ * One ffmpeg process encodes forward from `startSegment` (Jellyfin/Plex model).
+ */
+export function ensureSession(
+  fileId: number,
   rung: Rung,
+  absPath: string,
   probe: ProbeResult,
-): string[] {
-  const segPath = resolve(dir, 'seg_%d.ts');
-  const playlist = resolve(dir, 'playlist.m3u8');
-  const args: string[] = ['-hide_banner', '-loglevel', 'warning', '-y'];
+  segIndex: number,
+  log: FastifyBaseLogger,
+): TranscodeSession {
+  const key = sessionKey(fileId, rung);
+  const dir = sessionDir(fileId, rung);
+  ensureCacheVersion(dir);
 
-  // Hardware-accelerated decode where the source uses HEVC.
-  if (probe.vcodec === 'hevc' || probe.vcodec === 'h265') {
-    args.push('-hwaccel', 'videotoolbox');
-  }
-  args.push('-i', input);
-  args.push('-map', '0:v:0', '-map', '0:a:0?');
-
-  if (probe.mode === 'remux') {
-    args.push('-c', 'copy');
-  } else {
-    // transcode video with VideoToolbox, audio with libfaac (aac native)
-    const height = RUNG_HEIGHT[rung];
-    if (height && probe.height && probe.height > height) {
-      args.push('-vf', `scale=-2:${height}`);
+  const session = sessions.get(key);
+  const highest = highestEncodedSegment(dir);
+  if (session && session.status !== 'error' && session.status !== 'cancelled') {
+    const sequential =
+      segIndex >= session.startSegment && (highest === null || segIndex <= highest + 1);
+    if (sequential) {
+      session.lastAccess = Date.now();
+      return session;
     }
-    args.push(
-      '-c:v', 'h264_videotoolbox',
-      '-b:v', RUNG_VBR[rung],
-      '-maxrate', RUNG_VMAX[rung],
-      '-profile:v', 'high',
-      '-pix_fmt', 'yuv420p',
-      '-g', String(SEG_DURATION * 30), // ~keyframes per segment @ 30fps
-      '-keyint_min', String(SEG_DURATION * 30),
-      '-sc_threshold', '0',
-    );
-    args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2');
+    stopSession(session);
   }
 
-  args.push(
-    '-f', 'hls',
-    '-hls_time', String(SEG_DURATION),
-    '-hls_playlist_type', 'vod',
-    '-hls_flags', 'independent_segments+temp_file',
-    '-hls_segment_type', 'mpegts',
-    '-hls_segment_filename', segPath,
-    playlist,
-  );
+  return startSession(fileId, rung, absPath, probe, segIndex, log);
+}
 
-  return args;
+/** Start encoding early so the first segment is ready when the player requests it. */
+export function prewarmPlayback(
+  fileId: number,
+  rung: Rung,
+  absPath: string,
+  probe: ProbeResult,
+  startSegment: number,
+  log: FastifyBaseLogger,
+): void {
+  ensureSession(fileId, rung, absPath, probe, startSegment, log);
 }
 
 /** Wait until the segment file exists on disk (size>0) or timeout. */
 export function waitForSegment(
   dir: string,
   segName: string,
-  job: Job,
-  timeoutMs = 30_000,
+  session: TranscodeSession,
+  timeoutMs = 120_000,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const file = `${dir}/${segName}`;
@@ -230,7 +393,7 @@ export function waitForSegment(
       return false;
     };
     if (tryServe()) return;
-    if (job.status === 'error' || job.status === 'complete') {
+    if (session.status === 'error' || session.status === 'cancelled') {
       resolve(false);
       return;
     }
@@ -238,15 +401,15 @@ export function waitForSegment(
     let watcher: ReturnType<typeof fsWatch> | null = null;
     const interval = setInterval(() => {
       if (tryServe()) cleanup(true);
-      if (job.status === 'error') cleanup(false);
-    }, 250);
+      if (session.status === 'error' || session.status === 'cancelled') cleanup(false);
+    }, 200);
     const timeout = setTimeout(() => cleanup(false), timeoutMs);
     try {
       watcher = fsWatch(dir, () => {
         if (tryServe()) cleanup(true);
       });
     } catch {
-      // dir vanished — fall back to polling only
+      // fall back to polling only
     }
     const cleanup = (ok: boolean) => {
       clearTimeout(timeout);
@@ -258,12 +421,17 @@ export function waitForSegment(
 }
 
 export function touch(fileId: number, rung: Rung) {
-  const j = jobs.get(jobKey(fileId, rung));
-  if (j) j.lastAccess = Date.now();
+  const s = sessions.get(sessionKey(fileId, rung));
+  if (s) s.lastAccess = Date.now();
 }
 
-export function jobExists(fileId: number, rung: Rung): boolean {
-  const dir = jobDir(fileId, rung);
+export function sessionExists(fileId: number, rung: Rung): boolean {
+  const dir = sessionDir(fileId, rung);
   if (existsSync(resolve(dir, 'seg_0.ts'))) return true;
-  return jobs.has(jobKey(fileId, rung));
+  return sessions.has(sessionKey(fileId, rung));
+}
+
+/** @deprecated use sessionExists */
+export function jobExists(fileId: number, rung: Rung): boolean {
+  return sessionExists(fileId, rung);
 }

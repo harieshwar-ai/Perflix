@@ -1,12 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { lazy, Suspense } from 'react';
 import { api, type PlayContext } from '../lib/api.js';
+import { PlayerView } from '../components/player/PlayerView.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
-
-const PlayerView = lazy(() =>
-  import('../components/player/PlayerView.js').then((m) => ({ default: m.PlayerView })),
-);
 
 export const Route = createFileRoute('/play/$id')({
   component: PlayPage,
@@ -33,9 +29,5 @@ function PlayPage() {
       </div>
     );
   }
-  return (
-    <Suspense fallback={<LoadingScreen label="Loading player…" />}>
-      <PlayerView fileId={fileId} ctx={data} />
-    </Suspense>
-  );
+  return <PlayerView fileId={fileId} ctx={data} />;
 }

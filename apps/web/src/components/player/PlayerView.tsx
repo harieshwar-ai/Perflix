@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { attachStream, fmtTime } from '../../lib/player.js';
 import { api, type PlayContext, type QualityOption } from '../../lib/api.js';
 import { SubtitlePicker } from './SubtitlePicker.js';
+import { LoadingScreen } from '../ui/LoadingScreen.js';
 
 type ThumbMeta = {
   tileWidth: number;
@@ -16,6 +17,17 @@ type ThumbMeta = {
 };
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+
+function snapToSegment(sec: number, segDur: number): number {
+  if (!Number.isFinite(sec) || sec <= 0 || segDur <= 0) return 0;
+  return Math.floor(sec / segDur) * segDur;
+}
+
+function withHlsStart(url: string, startSec?: number): string {
+  if (!startSec || startSec <= 30) return url;
+  const join = url.includes('?') ? '&' : '?';
+  return `${url}${join}start=${Math.floor(startSec)}`;
+}
 
 export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }) {
   const navigate = useNavigate();
@@ -41,9 +53,11 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
   const [hoverX, setHoverX] = useState<number>(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const [showLoader, setShowLoader] = useState(true);
 
   const hideTimer = useRef<number | null>(null);
   const scrubbingRef = useRef(false);
+  const hasStartedRef = useRef(false);
   scrubbingRef.current = scrubbing;
 
   const goBack = useCallback(() => {
@@ -94,23 +108,46 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const h = attachStream(video, streamUrl, ctx.preferDirect);
-    handleRef.current = h;
+
+    let cancelled = false;
+    let streamHandle: ReturnType<typeof attachStream> | null = null;
+
+    setShowLoader(true);
+    hasStartedRef.current = false;
+    const pending = pendingSeekRef.current;
+    pendingSeekRef.current = null;
+    const segDur = ctx.segmentDuration || 4;
+    const rawResume = pending ?? ctx.progress?.position ?? 0;
+    const d0 = ctx.file.duration ?? 0;
+    const shouldResume = rawResume > 30 && (d0 === 0 || rawResume / d0 < 0.95);
+    const startPosition = !ctx.preferDirect && shouldResume
+      ? pending != null
+        ? snapToSegment(pending, segDur)
+        : ctx.playbackStartSec
+      : undefined;
+    const playbackUrl = withHlsStart(streamUrl, startPosition);
 
     const onLoaded = () => {
       const d = video.duration || ctx.file.duration || 0;
       setDuration(d);
-      const pending = pendingSeekRef.current;
-      pendingSeekRef.current = null;
-      const resume = pending ?? ctx.progress?.position ?? 0;
-      if (resume > 30 && (!d || resume / d < 0.95)) {
-        video.currentTime = resume;
-        setTime(resume);
+      if (shouldResume && startPosition != null) {
+        if (ctx.preferDirect) video.currentTime = rawResume;
+        setTime(startPosition);
       }
-      void video.play().catch(() => {});
     };
-    const onPlay = () => setPlaying(true);
+    const onCanPlay = () => {
+      setShowLoader(false);
+      if (video.paused) void video.play().catch(() => {});
+    };
+    const onPlaying = () => {
+      setPlaying(true);
+      hasStartedRef.current = true;
+      setShowLoader(false);
+    };
     const onPause = () => setPlaying(false);
+    const onWaiting = () => {
+      if (hasStartedRef.current) setShowLoader(true);
+    };
     const onTime = () => {
       if (!scrubbingRef.current) setTime(video.currentTime);
     };
@@ -124,25 +161,39 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
     };
 
     video.addEventListener('loadedmetadata', onLoaded);
-    video.addEventListener('play', onPlay);
+    video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('playing', onPlaying);
+    video.addEventListener('waiting', onWaiting);
     video.addEventListener('pause', onPause);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('volumechange', onVol);
     video.addEventListener('ratechange', onRate);
     video.addEventListener('ended', onEnded);
 
+    // Defer attach so React StrictMode's mount→unmount→mount cycle doesn't
+    // attach, destroy, and re-attach (which replays the opening segment).
+    const attachTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      streamHandle = attachStream(video, playbackUrl, ctx.preferDirect, startPosition);
+      handleRef.current = streamHandle;
+    }, 0);
+
     return () => {
+      cancelled = true;
+      window.clearTimeout(attachTimer);
       video.removeEventListener('loadedmetadata', onLoaded);
-      video.removeEventListener('play', onPlay);
+      video.removeEventListener('canplay', onCanPlay);
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('waiting', onWaiting);
       video.removeEventListener('pause', onPause);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('volumechange', onVol);
       video.removeEventListener('ratechange', onRate);
       video.removeEventListener('ended', onEnded);
-      h.destroy();
-      handleRef.current = null;
+      streamHandle?.destroy();
+      if (handleRef.current === streamHandle) handleRef.current = null;
     };
-  }, [streamUrl, ctx.preferDirect, ctx.progress?.position, ctx.file.duration, ctx.next, navigate]);
+  }, [streamUrl, ctx.preferDirect, ctx.playbackStartSec, ctx.segmentDuration, ctx.file.duration, ctx.progress?.position, ctx.next, navigate]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -159,14 +210,17 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
 
   useEffect(() => {
     let cancelled = false;
-    fetch(ctx.thumbsMetaUrl, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled && d) setThumbMeta(d as ThumbMeta);
-      })
-      .catch(() => {});
+    const timer = window.setTimeout(() => {
+      fetch(ctx.thumbsMetaUrl, { credentials: 'include' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!cancelled && d) setThumbMeta(d as ThumbMeta);
+        })
+        .catch(() => {});
+    }, 5000);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [ctx.thumbsMetaUrl]);
 
@@ -357,6 +411,20 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
           />
         ))}
       </video>
+
+      <AnimatePresence>
+        {showLoader ? (
+          <motion.div
+            key="player-loader"
+            className="absolute inset-0 z-[70]"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+          >
+            <LoadingScreen overlay label="Starting playback…" />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <AnimatePresence mode="sync">
         {showControls ? (

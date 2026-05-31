@@ -82,6 +82,53 @@ export function thumbsMetaPath(fileId: number): string {
   return resolve(thumbsDir, `${fileId}.json`);
 }
 
+export function computeThumbMeta(
+  duration: number,
+  srcWidth: number | null,
+  srcHeight: number | null,
+): ThumbMeta {
+  const intervalSec = Math.max(2, Math.floor(duration / TARGET_THUMBS) || 1);
+  const count = Math.min(TARGET_THUMBS, Math.max(1, Math.floor(duration / intervalSec)));
+  const cols = Math.min(COLS, count);
+  const rows = Math.max(1, Math.ceil(count / cols));
+  const aspect = srcWidth && srcHeight ? srcWidth / srcHeight : 16 / 9;
+  const tileHeight = Math.round(TILE_W / aspect);
+  return {
+    tileWidth: TILE_W,
+    tileHeight,
+    cols,
+    rows,
+    count,
+    intervalSec,
+    duration,
+  };
+}
+
+function generateScrubSprite(
+  fileId: number,
+  srcPath: string,
+  duration: number,
+  srcWidth: number | null,
+  srcHeight: number | null,
+): Promise<ThumbMeta> {
+  return coalesce(`thumbs:${fileId}`, async () => {
+    const sprite = thumbsSpritePath(fileId);
+    const metaFile = thumbsMetaPath(fileId);
+    const meta = computeThumbMeta(duration, srcWidth, srcHeight);
+    await run([
+      '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', srcPath,
+      '-vf', `fps=1/${meta.intervalSec},scale=${TILE_W}:-1,tile=${meta.cols}x${meta.rows}`,
+      '-frames:v', '1',
+      '-q:v', '4',
+      sprite,
+    ]);
+    await writeFile(metaFile, JSON.stringify(meta));
+    return meta;
+  });
+}
+
+/** Returns meta immediately; generates the sprite in the background when missing. */
 export async function ensureScrubSprite(
   fileId: number,
   srcPath: string,
@@ -94,31 +141,6 @@ export async function ensureScrubSprite(
   if (existsSync(sprite) && existsSync(metaFile)) {
     return JSON.parse(await readFile(metaFile, 'utf8')) as ThumbMeta;
   }
-  return coalesce(`thumbs:${fileId}`, async () => {
-    const intervalSec = Math.max(2, Math.floor(duration / TARGET_THUMBS) || 1);
-    const count = Math.min(TARGET_THUMBS, Math.max(1, Math.floor(duration / intervalSec)));
-    const cols = Math.min(COLS, count);
-    const rows = Math.max(1, Math.ceil(count / cols));
-    const aspect = srcWidth && srcHeight ? srcWidth / srcHeight : 16 / 9;
-    const tileHeight = Math.round(TILE_W / aspect);
-    await run([
-      '-hide_banner', '-loglevel', 'error', '-y',
-      '-i', srcPath,
-      '-vf', `fps=1/${intervalSec},scale=${TILE_W}:-1,tile=${cols}x${rows}`,
-      '-frames:v', '1',
-      '-q:v', '4',
-      sprite,
-    ]);
-    const meta: ThumbMeta = {
-      tileWidth: TILE_W,
-      tileHeight,
-      cols,
-      rows,
-      count,
-      intervalSec,
-      duration,
-    };
-    await writeFile(metaFile, JSON.stringify(meta));
-    return meta;
-  });
+  void generateScrubSprite(fileId, srcPath, duration, srcWidth, srcHeight).catch(() => {});
+  return computeThumbMeta(duration, srcWidth, srcHeight);
 }

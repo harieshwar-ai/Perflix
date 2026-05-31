@@ -1,31 +1,22 @@
-import Hls from 'hls.js';
+import Hls, { ErrorDetails, ErrorTypes } from 'hls.js';
 
 export type LevelInfo = { index: number; height: number; bitrate: number };
-
-export function canPlayNativeHls(video: HTMLVideoElement): boolean {
-  return video.canPlayType('application/vnd.apple.mpegurl') !== '';
-}
 
 export type AttachHandle = {
   destroy: () => void;
 };
 
+function isHlsPlaylist(url: string): boolean {
+  return url.includes('.m3u8');
+}
+
 export function attachStream(
   video: HTMLVideoElement,
   url: string,
   preferDirect: boolean,
+  startPositionSec?: number,
 ): AttachHandle {
-  if (preferDirect) {
-    video.src = url;
-    return {
-      destroy: () => {
-        video.removeAttribute('src');
-        video.load();
-      },
-    };
-  }
-
-  if (canPlayNativeHls(video)) {
+  if (preferDirect || !isHlsPlaylist(url)) {
     video.src = url;
     return {
       destroy: () => {
@@ -45,32 +36,54 @@ export function attachStream(
     };
   }
 
+  const startPos = startPositionSec && startPositionSec > 0 ? startPositionSec : -1;
+
   const hls = new Hls({
-    maxBufferLength: 30,
-    maxMaxBufferLength: 60,
+    maxBufferLength: 20,
+    maxMaxBufferLength: 40,
     enableWorker: true,
     lowLatencyMode: false,
-    backBufferLength: 30,
+    backBufferLength: 20,
+    startPosition: startPos,
+    startFragPrefetch: false,
+    maxBufferHole: 1,
+    maxFragLookUpTolerance: 0.25,
+    maxLoadingDelay: 8,
+    maxStarvationDelay: 8,
+    manifestLoadingTimeOut: 20_000,
+    levelLoadingTimeOut: 20_000,
+    fragLoadingTimeOut: 120_000,
+    fragLoadingMaxRetry: 20,
+    fragLoadingRetryDelay: 2000,
   });
+
   hls.loadSource(url);
   hls.attachMedia(video);
+
   hls.on(Hls.Events.ERROR, (_evt, data) => {
-    if (data.fatal) {
-      switch (data.type) {
-        case Hls.ErrorTypes.NETWORK_ERROR:
-          hls.startLoad();
-          break;
-        case Hls.ErrorTypes.MEDIA_ERROR:
-          hls.recoverMediaError();
-          break;
+    if (!data.fatal) return;
+    if (data.type === ErrorTypes.MEDIA_ERROR) {
+      hls.recoverMediaError();
+      return;
+    }
+    if (data.type === ErrorTypes.NETWORK_ERROR) {
+      // Only restart manifest/level loads. Never restart fragment loading from t=0 —
+      // that replays the studio intro when the next segment is still transcoding.
+      const manifestish =
+        data.details === ErrorDetails.MANIFEST_LOAD_ERROR ||
+        data.details === ErrorDetails.MANIFEST_PARSING_ERROR ||
+        data.details === ErrorDetails.LEVEL_LOAD_ERROR ||
+        data.details === ErrorDetails.LEVEL_PARSING_ERROR;
+      if (manifestish) {
+        const pos = video.currentTime;
+        hls.startLoad(pos > 0.5 ? pos : startPos > 0 ? startPos : undefined);
       }
     }
   });
+
   return {
     destroy: () => {
       hls.destroy();
-      video.removeAttribute('src');
-      video.load();
     },
   };
 }

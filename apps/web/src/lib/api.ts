@@ -125,6 +125,11 @@ export type PlayContext = {
   defaultQualityRung: string;
   thumbsMetaUrl: string;
   thumbsSpriteUrl: string;
+  /** HLS segment length in seconds — must match server playlist grid. */
+  segmentDuration: number;
+  /** Resume position snapped to segment boundary (transcode/HLS). */
+  playbackStartSec: number;
+  warm: { playlist: string; segment: string } | null;
 };
 
 export type TitleDetail = Title & {

@@ -5,7 +5,15 @@ import { db } from '../db/client.js';
 import { hlsCacheDir } from '../lib/paths.js';
 import { buildMasterPlaylist, buildMediaPlaylist } from '../media/hls.js';
 import { probeAndPersist } from '../media/probe.js';
-import { rungsFor, startJob, touch, waitForSegment, type Rung } from '../media/jobs.js';
+import {
+  ensureSession,
+  parseSegmentIndex,
+  rungsFor,
+  touch,
+  waitForSegment,
+  type Rung,
+} from '../media/jobs.js';
+import { segmentIndexForResume } from '../media/keyframes.js';
 
 const findFile = db.prepare(`
   SELECT id, path, duration, container, vcodec, acodec, width, height, mode
@@ -41,7 +49,6 @@ async function loadProbed(fileId: number) {
       },
     };
   }
-  // probe now
   const p = await probeAndPersist(row.id, row.path);
   return { row, probe: p };
 }
@@ -64,7 +71,7 @@ export async function registerHlsRoutes(app: FastifyInstance) {
     return body;
   });
 
-  app.get<{ Params: { id: string; rung: string } }>(
+  app.get<{ Params: { id: string; rung: string }; Querystring: { start?: string } }>(
     '/hls/:id/:rung/playlist.m3u8',
     async (req, reply) => {
       const id = Number(req.params.id);
@@ -72,8 +79,11 @@ export async function registerHlsRoutes(app: FastifyInstance) {
       if (!Number.isFinite(id) || !rung) return reply.code(400).send({ error: 'bad params' });
       const loaded = await loadProbed(id);
       if (!loaded) return reply.code(404).send({ error: 'not found' });
-      // Start the job so segments are already in flight by the time the player asks.
-      startJob(id, rung, loaded.row.path, loaded.probe, req.log);
+      const startSec = Number(req.query.start ?? 0);
+      if (Number.isFinite(startSec) && startSec > 0) {
+        const startSeg = segmentIndexForResume(startSec);
+        ensureSession(id, rung, loaded.row.path, loaded.probe, startSeg, req.log);
+      }
       const body = buildMediaPlaylist(loaded.probe);
       reply.header('Content-Type', 'application/vnd.apple.mpegurl');
       reply.header('Cache-Control', 'private, no-store');
@@ -92,7 +102,6 @@ export async function registerHlsRoutes(app: FastifyInstance) {
       const dir = resolve(hlsCacheDir, String(id), rung);
       const file = resolve(dir, seg);
 
-      // fast path: already cached
       if (existsSync(file)) {
         const st = statSync(file);
         if (st.isFile() && st.size > 0) {
@@ -106,9 +115,13 @@ export async function registerHlsRoutes(app: FastifyInstance) {
 
       const loaded = await loadProbed(id);
       if (!loaded) return reply.code(404).send({ error: 'not found' });
-      const job = startJob(id, rung, loaded.row.path, loaded.probe, req.log);
-      const ok = await waitForSegment(dir, seg, job, 45_000);
+      const segIndex = parseSegmentIndex(seg);
+      if (segIndex === null) return reply.code(400).send({ error: 'bad seg name' });
+
+      const session = ensureSession(id, rung, loaded.row.path, loaded.probe, segIndex, req.log);
+      const ok = await waitForSegment(dir, seg, session, 120_000);
       if (!ok) return reply.code(503).send({ error: 'segment not ready' });
+
       const st = statSync(file);
       reply.header('Content-Type', 'video/mp2t');
       reply.header('Content-Length', String(st.size));

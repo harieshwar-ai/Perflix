@@ -1,13 +1,5 @@
-import { SEG_DURATION, type Rung, totalSegmentsFor } from './jobs.js';
+import { SEG_DURATION, RUNG_ENCODE, type Rung, totalSegmentsFor } from './jobs.js';
 import type { ProbeResult } from './probe.js';
-
-const RUNG_BW: Record<Rung, number> = {
-  '2160': 14_000_000,
-  '1080': 4_700_000,
-  '720': 2_700_000,
-  '480': 1_200_000,
-  src: 6_000_000,
-};
 
 const RUNG_RES: Record<Rung, [number, number] | null> = {
   '2160': [3840, 2160],
@@ -24,7 +16,7 @@ export function buildMasterPlaylist(fileId: number, rungs: Rung[], probe: ProbeR
   for (const rung of rungs) {
     const [w, h] = RUNG_RES[rung] ?? [probe.width ?? 0, probe.height ?? 0];
     lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${RUNG_BW[rung]},RESOLUTION=${w}x${h},CODECS="${CODEC_STRING}"`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${RUNG_ENCODE[rung].bandwidth},RESOLUTION=${w}x${h},CODECS="${CODEC_STRING}"`,
       `${rung}/playlist.m3u8`,
     );
   }
