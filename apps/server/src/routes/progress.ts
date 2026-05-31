@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.js';
 
 const upsert = db.prepare(`
-  INSERT INTO progress (user_id, file_id, position, duration, updated_at)
-  VALUES (@user_id, @file_id, @position, @duration, @now)
-  ON CONFLICT(user_id, file_id) DO UPDATE SET
+  INSERT INTO progress (profile_id, file_id, position, duration, updated_at)
+  VALUES (@profile_id, @file_id, @position, @duration, @now)
+  ON CONFLICT(profile_id, file_id) DO UPDATE SET
     position = excluded.position,
     duration = excluded.duration,
     updated_at = excluded.updated_at
@@ -19,14 +19,14 @@ const recent = db.prepare(`
   JOIN files f ON f.id = p.file_id
   LEFT JOIN titles t ON t.id = f.title_id
   LEFT JOIN episodes e ON e.id = f.episode_id
-  WHERE p.user_id = ?
+  WHERE p.profile_id = ?
     AND p.position > 30
     AND (p.duration IS NULL OR p.position / p.duration < 0.95)
   ORDER BY p.updated_at DESC
   LIMIT 24
 `);
 
-const clearOne = db.prepare(`DELETE FROM progress WHERE user_id = ? AND file_id = ?`);
+const clearOne = db.prepare(`DELETE FROM progress WHERE profile_id = ? AND file_id = ?`);
 
 export async function registerProgressRoutes(app: FastifyInstance) {
   app.post<{
@@ -37,7 +37,7 @@ export async function registerProgressRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'bad payload' });
     }
     upsert.run({
-      user_id: req.userId!,
+      profile_id: req.profileId!,
       file_id: fileId,
       position,
       duration: duration ?? null,
@@ -47,7 +47,7 @@ export async function registerProgressRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/progress/recent', async (req) => {
-    const rows = recent.all(req.userId!) as Array<{
+    const rows = recent.all(req.profileId!) as Array<{
       file_id: number;
       position: number;
       duration: number | null;
@@ -88,7 +88,7 @@ export async function registerProgressRoutes(app: FastifyInstance) {
   app.delete<{ Params: { fileId: string } }>('/api/progress/:fileId', async (req, reply) => {
     const fileId = Number(req.params.fileId);
     if (!Number.isFinite(fileId)) return reply.code(400).send({ error: 'bad id' });
-    clearOne.run(req.userId!, fileId);
+    clearOne.run(req.profileId!, fileId);
     return { ok: true };
   });
 }

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { paths } from '../config.js';
+import { runMigrations } from './migrations.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schemaPath = resolve(here, 'schema.sql');
@@ -14,6 +15,7 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('synchronous = NORMAL');
 db.exec(readFileSync(schemaPath, 'utf8'));
+runMigrations(db);
 
 export type Title = {
   id: number;

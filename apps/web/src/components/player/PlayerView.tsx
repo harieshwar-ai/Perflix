@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { motion, AnimatePresence } from 'framer-motion';
 import { attachStream, fmtTime } from '../../lib/player.js';
-import { api, type PlayContext, type QualityOption } from '../../lib/api.js';
+import { cueAt, fetchSubtitleCues, type VttCue } from '../../lib/subtitles.js';
+import { api, type PlayContext, type QualityOption, type SubtitleListItem } from '../../lib/api.js';
 import { SubtitlePicker } from './SubtitlePicker.js';
 import { LoadingScreen } from '../ui/LoadingScreen.js';
 
@@ -18,15 +19,28 @@ type ThumbMeta = {
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
-function snapToSegment(sec: number, segDur: number): number {
-  if (!Number.isFinite(sec) || sec <= 0 || segDur <= 0) return 0;
-  return Math.floor(sec / segDur) * segDur;
+function subtitleOverlayStyle(style: Record<string, string> | null | undefined): CSSProperties {
+  return {
+    fontFamily: style?.font ?? 'system-ui, sans-serif',
+    fontSize: style?.size ?? '1.1em',
+    color: style?.color ?? '#fff',
+    background: style?.bg ?? 'rgba(0,0,0,0.6)',
+  };
 }
 
-function withHlsStart(url: string, startSec?: number): string {
-  if (!startSec || startSec <= 30) return url;
-  const join = url.includes('?') ? '&' : '?';
-  return `${url}${join}start=${Math.floor(startSec)}`;
+/** Event HLS exposes only encoded segments in video.duration (~4s early on). */
+function resolveTimelineDuration(
+  videoDur: number,
+  probed: number,
+  preferDirect: boolean,
+): number {
+  if (probed > 0 && !preferDirect) {
+    if (!Number.isFinite(videoDur) || videoDur <= 0) return probed;
+    if (videoDur < probed * 0.95) return probed;
+    return Math.max(probed, videoDur);
+  }
+  if (probed > 0) return Math.max(probed, videoDur || 0);
+  return videoDur || 0;
 }
 
 export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }) {
@@ -48,17 +62,31 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
   const [showControls, setShowControls] = useState(true);
   const [showSubs, setShowSubs] = useState(false);
   const [currentSub, setCurrentSub] = useState<number | 'off'>('off');
+  const [subtitleTracks, setSubtitleTracks] = useState(ctx.subtitles);
+  const [subCues, setSubCues] = useState<VttCue[]>([]);
+  const [subCueText, setSubCueText] = useState<string | null>(null);
   const [thumbMeta, setThumbMeta] = useState<ThumbMeta | null>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number>(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [showLoader, setShowLoader] = useState(true);
+  const [encodePct, setEncodePct] = useState(ctx.encode.progressPct);
+  const [encodeState, setEncodeState] = useState(ctx.encode.state);
+  const [readyThrough, setReadyThrough] = useState(ctx.encode.readyThroughSec);
+  const [showSkipIntro, setShowSkipIntro] = useState(false);
+  const [showSkipCredits, setShowSkipCredits] = useState(false);
+  const [audioLang, setAudioLang] = useState<string | null>(null);
 
   const hideTimer = useRef<number | null>(null);
   const scrubbingRef = useRef(false);
   const hasStartedRef = useRef(false);
   scrubbingRef.current = scrubbing;
+
+  const introMarker = ctx.skipMarkers.find((m) => m.kind === 'intro');
+  const creditsMarker = ctx.skipMarkers.find((m) => m.kind === 'credits');
+  const subOverlayStyle = subtitleOverlayStyle(ctx.subtitleStyle);
+  const probedDuration = ctx.file.duration ?? 0;
 
   const goBack = useCallback(() => {
     if (ctx.title) void navigate({ to: `/title/${ctx.title.id}` });
@@ -67,6 +95,10 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
 
   const displayTime = scrubTime ?? time;
   const progressPct = duration > 0 ? (displayTime / duration) * 100 : 0;
+  const encodedPct =
+    duration > 0 && !ctx.preferDirect && encodeState !== 'ready'
+      ? Math.min(100, (readyThrough / duration) * 100)
+      : 100;
 
   const currentQuality = useMemo(
     () => ctx.qualities.find((q) => q.rung === qualityRung) ?? ctx.qualities[0],
@@ -101,6 +133,11 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       if (v && Number.isFinite(v.currentTime)) pendingSeekRef.current = v.currentTime;
       setQualityRung(q.rung);
       setStreamUrl(q.streamUrl);
+      handleRef.current?.setQualityLock(q.rung === 'direct' ? 'auto' : q.rung);
+      void api.post('/api/profiles/prefs', {
+        key: 'qualityLock',
+        value: q.rung === 'direct' ? 'auto' : q.rung,
+      });
     },
     [qualityRung],
   );
@@ -116,24 +153,23 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
     hasStartedRef.current = false;
     const pending = pendingSeekRef.current;
     pendingSeekRef.current = null;
-    const segDur = ctx.segmentDuration || 4;
     const rawResume = pending ?? ctx.progress?.position ?? 0;
     const d0 = ctx.file.duration ?? 0;
     const shouldResume = rawResume > 30 && (d0 === 0 || rawResume / d0 < 0.95);
-    const startPosition = !ctx.preferDirect && shouldResume
-      ? pending != null
-        ? snapToSegment(pending, segDur)
-        : ctx.playbackStartSec
-      : undefined;
-    const playbackUrl = withHlsStart(streamUrl, startPosition);
+    const startPosition = shouldResume ? (pending ?? ctx.playbackStartSec) : undefined;
+    const playbackUrl = streamUrl;
 
     const onLoaded = () => {
-      const d = video.duration || ctx.file.duration || 0;
-      setDuration(d);
+      setDuration(resolveTimelineDuration(video.duration, probedDuration, ctx.preferDirect));
       if (shouldResume && startPosition != null) {
         if (ctx.preferDirect) video.currentTime = rawResume;
         setTime(startPosition);
       }
+    };
+    const onDurationChange = () => {
+      setDuration((cur) =>
+        Math.max(cur, resolveTimelineDuration(video.duration, probedDuration, ctx.preferDirect)),
+      );
     };
     const onCanPlay = () => {
       setShowLoader(false);
@@ -149,7 +185,19 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       if (hasStartedRef.current) setShowLoader(true);
     };
     const onTime = () => {
-      if (!scrubbingRef.current) setTime(video.currentTime);
+      if (!scrubbingRef.current) {
+        setTime(video.currentTime);
+        if (introMarker && video.currentTime >= introMarker.startSec && video.currentTime < introMarker.endSec - 2) {
+          setShowSkipIntro(true);
+        } else {
+          setShowSkipIntro(false);
+        }
+        if (creditsMarker && video.currentTime >= creditsMarker.startSec) {
+          setShowSkipCredits(true);
+        } else {
+          setShowSkipCredits(false);
+        }
+      }
     };
     const onVol = () => {
       setVolume(video.volume);
@@ -161,6 +209,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
     };
 
     video.addEventListener('loadedmetadata', onLoaded);
+    video.addEventListener('durationchange', onDurationChange);
     video.addEventListener('canplay', onCanPlay);
     video.addEventListener('playing', onPlaying);
     video.addEventListener('waiting', onWaiting);
@@ -174,7 +223,10 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
     // attach, destroy, and re-attach (which replays the opening segment).
     const attachTimer = window.setTimeout(() => {
       if (cancelled) return;
-      streamHandle = attachStream(video, playbackUrl, ctx.preferDirect, startPosition);
+      streamHandle = attachStream(video, playbackUrl, ctx.preferDirect, {
+        startPositionSec: startPosition,
+        qualityLock: qualityRung === 'direct' ? 'auto' : qualityRung,
+      });
       handleRef.current = streamHandle;
     }, 0);
 
@@ -182,6 +234,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       cancelled = true;
       window.clearTimeout(attachTimer);
       video.removeEventListener('loadedmetadata', onLoaded);
+      video.removeEventListener('durationchange', onDurationChange);
       video.removeEventListener('canplay', onCanPlay);
       video.removeEventListener('playing', onPlaying);
       video.removeEventListener('waiting', onWaiting);
@@ -193,20 +246,62 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       streamHandle?.destroy();
       if (handleRef.current === streamHandle) handleRef.current = null;
     };
-  }, [streamUrl, ctx.preferDirect, ctx.playbackStartSec, ctx.segmentDuration, ctx.file.duration, ctx.progress?.position, ctx.next, navigate]);
+  }, [streamUrl, ctx.preferDirect, ctx.playbackStartSec, probedDuration, ctx.progress?.position, ctx.next, navigate, qualityRung, introMarker, creditsMarker]);
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const id = window.setTimeout(() => {
-      for (let i = 0; i < video.textTracks.length; i++) {
-        const t = video.textTracks[i];
-        if (!t) continue;
-        t.mode = currentSub !== 'off' && Number(t.id) === currentSub ? 'showing' : 'disabled';
-      }
-    }, 30);
-    return () => window.clearTimeout(id);
-  }, [currentSub, ctx.subtitles]);
+    if (ctx.preferDirect || encodeState === 'ready') return;
+    const poll = window.setInterval(() => {
+      api
+        .get<{ progressPct: number; state: string; readyThroughSec: number }>(`/api/play/${fileId}/encode-status`)
+        .then((s) => {
+          setEncodePct(s.progressPct);
+          setEncodeState(s.state as typeof encodeState);
+          setReadyThrough(s.readyThroughSec);
+        })
+        .catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(poll);
+  }, [fileId, ctx.preferDirect, encodeState]);
+
+  const handleSubSelect = useCallback((choice: number | 'off', sub?: SubtitleListItem) => {
+    setCurrentSub(choice);
+    if (sub) {
+      setSubtitleTracks((prev) => (prev.some((s) => s.id === sub.id) ? prev : [...prev, sub]));
+    }
+    setShowSubs(false);
+  }, []);
+
+  useEffect(() => {
+    if (currentSub === 'off') {
+      setSubCues([]);
+      setSubCueText(null);
+      return;
+    }
+
+    const sub = subtitleTracks.find((s) => s.id === currentSub);
+    if (!sub) return;
+
+    let cancelled = false;
+    fetchSubtitleCues(sub.url)
+      .then((cues) => {
+        if (!cancelled) setSubCues(cues);
+      })
+      .catch(() => {
+        if (!cancelled) setSubCues([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSub, subtitleTracks]);
+
+  useEffect(() => {
+    if (currentSub === 'off' || subCues.length === 0) {
+      setSubCueText(null);
+      return;
+    }
+    setSubCueText(cueAt(subCues, time));
+  }, [time, subCues, currentSub]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,11 +324,15 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       const v = videoRef.current;
       if (!v || v.paused || scrubbing) return;
       api
-        .post('/api/progress', { fileId, position: v.currentTime, duration: v.duration || null })
+        .post('/api/progress', {
+          fileId,
+          position: v.currentTime,
+          duration: duration > 0 ? duration : v.duration || null,
+        })
         .catch(() => {});
     }, 5000);
     return () => window.clearInterval(t);
-  }, [fileId, scrubbing]);
+  }, [fileId, scrubbing, duration, probedDuration]);
 
   useEffect(() => {
     const save = () => {
@@ -242,7 +341,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       navigator.sendBeacon?.(
         '/api/progress',
         new Blob(
-          [JSON.stringify({ fileId, position: v.currentTime, duration: v.duration || null })],
+          [JSON.stringify({ fileId, position: v.currentTime, duration: duration > 0 ? duration : v.duration || null })],
           { type: 'application/json' },
         ),
       );
@@ -252,7 +351,7 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
       save();
       window.removeEventListener('pagehide', save);
     };
-  }, [fileId]);
+  }, [fileId, duration, probedDuration]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -399,30 +498,75 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
           if (v.paused) void v.play();
           else v.pause();
         }}
-      >
-        {ctx.subtitles.map((s) => (
-          <track
-            key={s.id}
-            id={String(s.id)}
-            kind="subtitles"
-            src={s.url}
-            srcLang={s.lang}
-            label={s.label ?? s.lang}
-          />
-        ))}
-      </video>
+      />
+
+      {subCueText ? (
+        <div className="absolute inset-x-0 bottom-[14%] z-[55] flex justify-center px-6 pointer-events-none">
+          <p
+            className="max-w-[85%] text-center leading-snug whitespace-pre-wrap rounded px-3 py-1.5 shadow-lg"
+            style={subOverlayStyle}
+          >
+            {subCueText}
+          </p>
+        </div>
+      ) : null}
 
       <AnimatePresence>
-        {showLoader ? (
+        {showLoader || (encodeState !== 'ready' && !ctx.preferDirect && time > readyThrough + 2) ? (
           <motion.div
             key="player-loader"
-            className="absolute inset-0 z-[70]"
+            className="absolute inset-0 z-[70] pointer-events-none"
             initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
           >
-            <LoadingScreen overlay label="Starting playback…" />
+            <LoadingScreen
+              overlay
+              label={
+                encodeState !== 'ready' && !ctx.preferDirect
+                  ? `Preparing ${Math.round(encodePct)}%`
+                  : 'Starting playback…'
+              }
+            />
+            {encodeState !== 'ready' && !ctx.preferDirect ? (
+              <div className="absolute bottom-24 inset-x-0 px-12">
+                <div className="h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-brand transition-all duration-500"
+                    style={{ width: `${encodePct}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
           </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSkipIntro && introMarker ? (
+          <motion.button
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="absolute right-8 bottom-32 z-20 px-5 py-2 rounded bg-white/90 text-black font-semibold text-sm hover:bg-white"
+            onClick={() => seekToTime(introMarker.endSec)}
+          >
+            Skip Intro
+          </motion.button>
+        ) : null}
+        {showSkipCredits && creditsMarker ? (
+          <motion.button
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="absolute right-8 bottom-44 z-20 px-5 py-2 rounded bg-white/90 text-black font-semibold text-sm hover:bg-white"
+            onClick={() => {
+              if (ctx.next) void navigate({ to: `/play/${ctx.next.file_id}` });
+              else seekToTime(duration);
+            }}
+          >
+            Skip Credits
+          </motion.button>
         ) : null}
       </AnimatePresence>
 
@@ -470,6 +614,12 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
                 }}
               >
                 <div className="absolute inset-y-1 left-0 right-0 bg-white/20 rounded-full" />
+                {encodedPct < 100 ? (
+                  <div
+                    className="absolute inset-y-1 left-0 bg-white/35 rounded-full"
+                    style={{ width: `${encodedPct}%` }}
+                  />
+                ) : null}
                 <div
                   className="absolute inset-y-1 left-0 bg-brand rounded-full"
                   style={{ width: `${progressPct}%` }}
@@ -558,14 +708,37 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
                       active: s === speed,
                     }))}
                   />
+                  {ctx.audioTracks.length > 1 ? (
+                    <Menu
+                      label={audioLang ?? 'Audio'}
+                      items={ctx.audioTracks.map((a) => ({
+                        label: a.label,
+                        active: audioLang === a.lang,
+                        onClick: () => {
+                          setAudioLang(a.lang);
+                          void api.post('/api/profiles/prefs', { key: 'audioTrack', value: a.lang });
+                        },
+                      }))}
+                    />
+                  ) : null}
                   {ctx.qualities.length > 0 ? (
                     <Menu
                       label={currentQuality?.label ?? 'Quality'}
-                      items={ctx.qualities.map((q) => ({
-                        label: q.label,
-                        onClick: () => changeQuality(q),
-                        active: q.rung === qualityRung,
-                      }))}
+                      items={[
+                        {
+                          label: 'Auto',
+                          onClick: () => {
+                            handleRef.current?.setQualityLock('auto');
+                            void api.post('/api/profiles/prefs', { key: 'qualityLock', value: 'auto' });
+                          },
+                          active: qualityRung === 'auto',
+                        },
+                        ...ctx.qualities.map((q) => ({
+                          label: q.label,
+                          onClick: () => changeQuality(q),
+                          active: q.rung === qualityRung,
+                        })),
+                      ]}
                     />
                   ) : null}
                   <IconButton onClick={() => setShowSubs(true)} title="Subtitles">
@@ -586,10 +759,9 @@ export function PlayerView({ fileId, ctx }: { fileId: number; ctx: PlayContext }
         open={showSubs}
         onClose={() => setShowSubs(false)}
         current={currentSub}
-        onSelect={(v) => {
-          setCurrentSub(v);
-          setShowSubs(false);
-        }}
+        profileId={ctx.profileId}
+        initialStyle={ctx.subtitleStyle}
+        onSelect={handleSubSelect}
       />
     </div>
   );

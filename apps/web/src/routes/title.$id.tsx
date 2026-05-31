@@ -39,6 +39,13 @@ function TitlePage() {
     queryFn: () => api.get<TitleDetail>(`/api/title/${id}`),
   });
   const { inList, toggle } = useWatchlist(titleId);
+  const prepare = useMutation({
+    mutationFn: (fileId: number) => api.post(`/api/storage/prepare/${fileId}`),
+  });
+  const pin = useMutation({
+    mutationFn: ({ fileId, pinned }: { fileId: number; pinned: boolean }) =>
+      api.post(`/api/storage/pin/${fileId}`, { pinned }),
+  });
 
   const seasons = useMemo(() => {
     if (!data?.episodes) return [];
@@ -54,6 +61,8 @@ function TitlePage() {
   if (!data) return <LoadingScreen label="Title not found" />;
 
   const playTarget = data.playTarget;
+  const primaryFileId =
+    data.kind === 'movie' ? data.file?.file_id : playTarget?.fileId;
 
   function play(fileId?: number | null) {
     if (!fileId) return;
@@ -118,6 +127,24 @@ function TitlePage() {
             >
               {inList ? '✓ In My List' : '+ My List'}
             </button>
+            {primaryFileId ? (
+              <>
+                <button
+                  onClick={() => prepare.mutate(primaryFileId)}
+                  disabled={prepare.isPending}
+                  className="text-sm border border-white/20 rounded-md px-4 py-2 hover:bg-white/10"
+                >
+                  {prepare.isPending ? 'Preparing…' : 'Prepare offline'}
+                </button>
+                <button
+                  onClick={() => pin.mutate({ fileId: primaryFileId, pinned: true })}
+                  disabled={pin.isPending}
+                  className="text-sm border border-white/20 rounded-md px-4 py-2 hover:bg-white/10"
+                >
+                  Pin cache
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>

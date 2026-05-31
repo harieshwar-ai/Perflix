@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { session } from './session.js';
+import { resolveProfileId } from '../profiles/context.js';
 
 const PUBLIC_PREFIXES = ['/health', '/api/auth/'];
 
@@ -18,6 +19,7 @@ function isGated(url: string): boolean {
 declare module 'fastify' {
   interface FastifyRequest {
     userId?: number;
+    profileId?: number;
   }
 }
 
@@ -32,5 +34,7 @@ export async function registerAuthGate(app: FastifyInstance) {
       return reply;
     }
     req.userId = s.userId;
+    const profileId = await resolveProfileId(req, reply);
+    if (profileId) req.profileId = profileId;
   });
 }

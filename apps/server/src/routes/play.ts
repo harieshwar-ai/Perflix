@@ -1,13 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.js';
 import { defaultQuality, qualitiesFor } from '../lib/qualities.js';
-import { prewarmPlayback, SEG_DURATION, type Rung } from '../media/jobs.js';
-import { playbackStartSec, segmentIndexForResume } from '../media/keyframes.js';
+import { SEG_DURATION } from '../media/ladder.js';
+import { enqueueOnPlay, getEncodeStatus } from '../media/queue.js';
 import { probeAndPersist } from '../media/probe.js';
+import { getSkipMarkers } from '../media/skip.js';
+import { getPref } from '../profiles/context.js';
+import { listAudioRenditions } from '../media/renditions.js';
 
 const findFile = db.prepare(`
   SELECT f.id AS file_id, f.duration, f.width, f.height, f.mode, f.container, f.vcodec, f.acodec,
-         f.title_id, f.episode_id, f.path
+         f.title_id, f.episode_id, f.path, f.pinned
   FROM files f WHERE f.id = ?
 `);
 
@@ -47,7 +50,7 @@ const findSubs = db.prepare(`
 `);
 
 const findProgress = db.prepare(`
-  SELECT position, duration FROM progress WHERE user_id = ? AND file_id = ?
+  SELECT position, duration FROM progress WHERE profile_id = ? AND file_id = ?
 `);
 
 function resumeStartSec(
@@ -64,6 +67,7 @@ export async function registerPlayRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/api/play/:id/context', async (req, reply) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
+    const profileId = req.profileId!;
     const file = findFile.get(id) as
       | {
           file_id: number;
@@ -77,6 +81,7 @@ export async function registerPlayRoutes(app: FastifyInstance) {
           title_id: number | null;
           episode_id: number | null;
           path: string;
+          pinned: number;
         }
       | undefined;
     if (!file) return reply.code(404).send({ error: 'not found' });
@@ -89,6 +94,8 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       width: file.width,
       height: file.height,
       mode: (file.mode ?? 'transcode') as 'direct' | 'remux' | 'transcode',
+      hdr: false,
+      audioStreams: [] as { index: number; codec: string; channels: number; lang: string | null; label: string | null }[],
     };
     if (!file.mode || !file.duration) {
       probe = await probeAndPersist(id, file.path);
@@ -123,13 +130,13 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       (s) => ({ ...s, url: `/subs/track/${s.id}` }),
     );
 
-    const userId = req.userId!;
-    const progress = (findProgress.get(userId, id) as { position: number; duration: number | null } | undefined) ?? null;
+    const progress = (findProgress.get(profileId, id) as { position: number; duration: number | null } | undefined) ?? null;
 
     const mode = probe.mode;
     const preferDirect = mode === 'direct';
     const qualities = qualitiesFor(id, mode, probe);
-    const selected = defaultQuality(qualities);
+    const qualityPref = getPref(profileId, 'qualityCap');
+    const selected = defaultQuality(qualities, qualityPref);
 
     if (title && typeof title['genres'] === 'string') {
       try {
@@ -145,17 +152,28 @@ export async function registerPlayRoutes(app: FastifyInstance) {
     if (episode && episode['still']) episode['still'] = `/art/${episode['still']}`;
 
     const resumeSec = resumeStartSec(progress, probe.duration ?? file.duration ?? 0);
-    const snappedStart = playbackStartSec(resumeSec);
-    const startSeg = segmentIndexForResume(resumeSec);
-    let warm: { playlist: string; segment: string } | null = null;
-    if (!preferDirect && selected.rung !== 'direct') {
-      const rung = selected.rung as Rung;
-      prewarmPlayback(id, rung, file.path, probe, startSeg, req.log);
-      const startQuery = snappedStart > 0 ? `?start=${Math.floor(snappedStart)}` : '';
-      warm = {
-        playlist: `${selected.streamUrl}${startQuery}`,
-        segment: `/hls/${id}/${rung}/seg_${startSeg}.ts`,
-      };
+
+    let encode = getEncodeStatus(id);
+    if (!preferDirect) enqueueOnPlay(id, req.log);
+
+    const audioTracks = listAudioRenditions(id)
+      .filter((a) => a.status === 'ready' || a.status === 'encoding')
+      .map((a) => ({
+        lang: a.lang ?? 'und',
+        label: a.label ?? a.lang ?? 'Audio',
+        rung: a.rung,
+        url: `/hls/${id}/audio/${a.lang}/playlist.m3u8`,
+      }));
+
+    const skipMarkers = getSkipMarkers(id);
+    const subStyleRaw = getPref(profileId, 'subtitleStyle');
+    let subtitleStyle: Record<string, string> | null = null;
+    if (subStyleRaw) {
+      try {
+        subtitleStyle = JSON.parse(subStyleRaw) as Record<string, string>;
+      } catch {
+        subtitleStyle = null;
+      }
     }
 
     return {
@@ -164,6 +182,7 @@ export async function registerPlayRoutes(app: FastifyInstance) {
         duration: file.duration,
         width: file.width,
         height: file.height,
+        pinned: file.pinned === 1,
       },
       title,
       episode,
@@ -179,8 +198,22 @@ export async function registerPlayRoutes(app: FastifyInstance) {
       thumbsMetaUrl: `/thumbs/${id}/meta.json`,
       thumbsSpriteUrl: `/thumbs/${id}/sprite.jpg`,
       segmentDuration: SEG_DURATION,
-      playbackStartSec: snappedStart,
-      warm,
+      playbackStartSec: resumeSec,
+      encode: {
+        state: preferDirect ? 'ready' : encode.state,
+        progressPct: preferDirect ? 100 : encode.progressPct,
+        readyThroughSec: preferDirect ? (probe.duration ?? 0) : encode.readyThroughSec,
+      },
+      audioTracks,
+      skipMarkers,
+      subtitleStyle,
+      profileId,
     };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/play/:id/encode-status', async (req, reply) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
+    return getEncodeStatus(id);
   });
 }

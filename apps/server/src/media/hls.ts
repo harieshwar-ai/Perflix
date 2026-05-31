@@ -1,48 +1,74 @@
-import { SEG_DURATION, RUNG_ENCODE, type Rung, totalSegmentsFor } from './jobs.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { RUNG_ENCODE, RUNG_RES, rungsFor, type Rung } from './ladder.js';
 import type { ProbeResult } from './probe.js';
+import type { RenditionRow } from './renditions.js';
+import { listAudioRenditions, listVideoRenditions } from './renditions.js';
 
-const RUNG_RES: Record<Rung, [number, number] | null> = {
-  '2160': [3840, 2160],
-  '1080': [1920, 1080],
-  '720': [1280, 720],
-  '480': [854, 480],
-  src: null,
-};
+const H264_CODEC = 'avc1.640028,mp4a.40.2';
+const HEVC_CODEC = 'hvc1.1.6.L153.B0,mp4a.40.2';
 
-const CODEC_STRING = 'avc1.640028,mp4a.40.2';
+function codecForRung(rung: Rung): string {
+  return rung === 'hevc-hdr' ? HEVC_CODEC : H264_CODEC;
+}
 
-export function buildMasterPlaylist(fileId: number, rungs: Rung[], probe: ProbeResult): string {
-  const lines: string[] = ['#EXTM3U', '#EXT-X-VERSION:6'];
-  for (const rung of rungs) {
-    const [w, h] = RUNG_RES[rung] ?? [probe.width ?? 0, probe.height ?? 0];
+export function buildMasterPlaylist(
+  fileId: number,
+  probe: ProbeResult,
+  videoRenditions: RenditionRow[],
+  audioRenditions: RenditionRow[],
+): string {
+  const lines: string[] = ['#EXTM3U', '#EXT-X-VERSION:7'];
+
+  const readyAudio = audioRenditions.filter((a) => a.status === 'ready' || a.status === 'encoding');
+  for (const a of readyAudio) {
+    const lang = a.lang ?? 'und';
+    const name = a.label ?? lang;
+    const isDefault = readyAudio[0]?.id === a.id ? 'YES' : 'NO';
     lines.push(
-      `#EXT-X-STREAM-INF:BANDWIDTH=${RUNG_ENCODE[rung].bandwidth},RESOLUTION=${w}x${h},CODECS="${CODEC_STRING}"`,
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="${name}",LANGUAGE="${lang}",DEFAULT=${isDefault},AUTOSELECT=YES,URI="audio/${lang}/playlist.m3u8"`,
+    );
+  }
+
+  const audioGroup = readyAudio.length ? ',AUDIO="audio"' : '';
+  let usable = videoRenditions.filter((r) => r.status !== 'failed');
+
+  if (usable.length === 0) {
+    usable = rungsFor(probe).map(
+      (rung) =>
+        ({
+          rung,
+          bandwidth: RUNG_ENCODE[rung]?.bandwidth ?? null,
+          width: RUNG_RES[rung]?.[0] ?? probe.width,
+          height: RUNG_RES[rung]?.[1] ?? probe.height,
+          status: 'pending',
+        }) as RenditionRow,
+    );
+  }
+
+  for (const r of usable) {
+    const rung = r.rung as Rung;
+    const [w, h] = RUNG_RES[rung] ?? [r.width ?? probe.width ?? 0, r.height ?? probe.height ?? 0];
+    const bw = r.bandwidth ?? RUNG_ENCODE[rung]?.bandwidth ?? 5_000_000;
+    lines.push(
+      `#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${w}x${h},CODECS="${codecForRung(rung)}"${audioGroup}`,
       `${rung}/playlist.m3u8`,
     );
   }
+
   return lines.join('\n') + '\n';
 }
 
-/**
- * Synthesize the media playlist from duration. Each segment is exactly
- * SEG_DURATION seconds except the final one (which is the remainder).
- * This matches what ffmpeg's HLS muxer emits, so the file content matches
- * what ffmpeg writes once complete.
- */
-export function buildMediaPlaylist(probe: ProbeResult): string {
-  const total = totalSegmentsFor(probe.duration);
-  const lines: string[] = [
-    '#EXTM3U',
-    '#EXT-X-VERSION:6',
-    '#EXT-X-PLAYLIST-TYPE:VOD',
-    `#EXT-X-TARGETDURATION:${SEG_DURATION + 1}`,
-    '#EXT-X-MEDIA-SEQUENCE:0',
-    '#EXT-X-INDEPENDENT-SEGMENTS',
-  ];
-  for (let i = 0; i < total; i++) {
-    const segLen = i === total - 1 ? Math.max(0.1, probe.duration - i * SEG_DURATION) : SEG_DURATION;
-    lines.push(`#EXTINF:${segLen.toFixed(3)},`, `seg_${i}.ts`);
+export function readMediaPlaylist(playlistPath: string, fallbackDuration?: number): string | null {
+  if (!existsSync(playlistPath)) {
+    if (fallbackDuration && fallbackDuration > 0) return null;
+    return null;
   }
-  lines.push('#EXT-X-ENDLIST');
-  return lines.join('\n') + '\n';
+  return readFileSync(playlistPath, 'utf8');
+}
+
+export function masterForFile(fileId: number, probe: ProbeResult): string {
+  const videos = listVideoRenditions(fileId);
+  const audio = listAudioRenditions(fileId);
+  return buildMasterPlaylist(fileId, probe, videos, audio);
 }

@@ -25,7 +25,7 @@ See the implementation plan at `/Users/harieshwar-ai/.claude/plans/linked-juggli
 
 ## Getting Started
 
-Prereqs: Node 20+, npm 10+, FFmpeg (`brew install ffmpeg`).
+Prereqs: Node 20+, npm 10+, FFmpeg (`brew install ffmpeg`). HDR titles need `zscale` (`brew install ffmpeg-full`).
 
 ```bash
 cp .env.example .env       # fill in TMDB_ACCESS_TOKEN, OPENSUBS_API_KEY, secrets, LIBRARY_ROOT

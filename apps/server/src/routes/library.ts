@@ -37,7 +37,7 @@ const listEpisodes = db.prepare(`
     p.updated_at AS progress_updated_at
   FROM episodes e
   LEFT JOIN files f ON f.episode_id = e.id
-  LEFT JOIN progress p ON p.file_id = f.id AND p.user_id = @user_id
+  LEFT JOIN progress p ON p.file_id = f.id AND p.profile_id = @profile_id
   WHERE e.title_id = @title_id
   ORDER BY e.season, e.episode
 `);
@@ -45,7 +45,7 @@ const listEpisodes = db.prepare(`
 const movieFile = db.prepare(`
   SELECT f.id AS file_id, p.position, p.duration, p.updated_at AS progress_updated_at
   FROM files f
-  LEFT JOIN progress p ON p.file_id = f.id AND p.user_id = @user_id
+  LEFT JOIN progress p ON p.file_id = f.id AND p.profile_id = @profile_id
   WHERE f.title_id = @title_id AND f.episode_id IS NULL
   LIMIT 1
 `);
@@ -97,20 +97,20 @@ export async function registerLibraryRoutes(app: FastifyInstance) {
     const t = getTitleById.get(id) as TitleWithCounts | undefined;
     if (!t) return reply.code(404).send({ error: 'not found' });
     const decorated = decorate(t);
-    const userId = req.userId!;
+    const profileId = req.profileId!;
     if (t.kind === 'series') {
-      const episodes = listEpisodes.all({ title_id: id, user_id: userId }) as EpisodeWithFile[];
+      const episodes = listEpisodes.all({ title_id: id, profile_id: profileId }) as EpisodeWithFile[];
       const stills = episodes.map((e) => ({
         ...e,
         still: e.still ? `/art/${e.still}` : null,
       }));
-      const playTarget = resolvePlayTarget(id, 'series', userId);
+      const playTarget = resolvePlayTarget(id, 'series', profileId);
       return { ...decorated, episodes: stills, playTarget };
     }
-    const file = movieFile.get({ title_id: id, user_id: userId }) as
+    const file = movieFile.get({ title_id: id, profile_id: profileId }) as
       | { file_id: number; position: number | null; duration: number | null; progress_updated_at: number | null }
       | undefined;
-    const playTarget = resolvePlayTarget(id, 'movie', userId);
+    const playTarget = resolvePlayTarget(id, 'movie', profileId);
     return { ...decorated, file, playTarget };
   });
 
@@ -119,7 +119,7 @@ export async function registerLibraryRoutes(app: FastifyInstance) {
     if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
     const t = getTitleById.get(id) as TitleWithCounts | undefined;
     if (!t) return reply.code(404).send({ error: 'not found' });
-    const playTarget = resolvePlayTarget(id, t.kind, req.userId!);
+    const playTarget = resolvePlayTarget(id, t.kind, req.profileId!);
     if (!playTarget) return reply.code(404).send({ error: 'no playable file' });
     return playTarget;
   });

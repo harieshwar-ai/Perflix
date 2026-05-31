@@ -2,16 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.js';
 
 const upsert = db.prepare(`
-  INSERT INTO lists (user_id, title_id, kind, added_at)
-  VALUES (@user_id, @title_id, @kind, @now)
-  ON CONFLICT(user_id, title_id, kind) DO NOTHING
+  INSERT INTO lists (profile_id, title_id, kind, added_at)
+  VALUES (@profile_id, @title_id, @kind, @now)
+  ON CONFLICT(profile_id, title_id, kind) DO NOTHING
 `);
 
 const del = db.prepare(`
-  DELETE FROM lists WHERE user_id = ? AND title_id = ? AND kind = ?
+  DELETE FROM lists WHERE profile_id = ? AND title_id = ? AND kind = ?
 `);
 
-const listForUser = db.prepare(`
+const listForProfile = db.prepare(`
   SELECT t.id, t.kind AS title_kind, t.tmdb_id, t.title, t.year, t.overview,
          t.poster, t.backdrop, t.genres, t.runtime, t.rating, t.added_at,
          (SELECT COUNT(*) FROM files f WHERE f.title_id = t.id) AS file_count,
@@ -19,12 +19,12 @@ const listForUser = db.prepare(`
          (SELECT COUNT(*) FROM episodes e WHERE e.title_id = t.id) AS episode_count
   FROM lists l
   JOIN titles t ON t.id = l.title_id
-  WHERE l.user_id = ? AND l.kind = ?
+  WHERE l.profile_id = ? AND l.kind = ?
   ORDER BY l.added_at DESC
 `);
 
 const stateForTitle = db.prepare(`
-  SELECT kind FROM lists WHERE user_id = ? AND title_id = ?
+  SELECT kind FROM lists WHERE profile_id = ? AND title_id = ?
 `);
 
 const VALID_KINDS = new Set(['watchlist', 'watched', 'hidden']);
@@ -71,14 +71,14 @@ export async function registerListsRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { kind?: string } }>('/api/lists', async (req) => {
     const kind = req.query.kind ?? 'watchlist';
     if (!VALID_KINDS.has(kind)) return { titles: [] };
-    const rows = listForUser.all(req.userId!, kind) as RawTitle[];
+    const rows = listForProfile.all(req.profileId!, kind) as RawTitle[];
     return { titles: rows.map(shape) };
   });
 
   app.get<{ Params: { titleId: string } }>('/api/lists/state/:titleId', async (req, reply) => {
     const id = Number(req.params.titleId);
     if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
-    const rows = stateForTitle.all(req.userId!, id) as { kind: string }[];
+    const rows = stateForTitle.all(req.profileId!, id) as { kind: string }[];
     return { kinds: rows.map((r) => r.kind) };
   });
 
@@ -90,7 +90,7 @@ export async function registerListsRoutes(app: FastifyInstance) {
       if (!Number.isFinite(id) || !VALID_KINDS.has(kind)) {
         return reply.code(400).send({ error: 'bad params' });
       }
-      upsert.run({ user_id: req.userId!, title_id: id, kind, now: Date.now() });
+      upsert.run({ profile_id: req.profileId!, title_id: id, kind, now: Date.now() });
       return { ok: true };
     },
   );
@@ -103,7 +103,7 @@ export async function registerListsRoutes(app: FastifyInstance) {
       if (!Number.isFinite(id) || !VALID_KINDS.has(kind)) {
         return reply.code(400).send({ error: 'bad params' });
       }
-      del.run(req.userId!, id, kind);
+      del.run(req.profileId!, id, kind);
       return { ok: true };
     },
   );

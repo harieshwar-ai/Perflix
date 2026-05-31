@@ -17,8 +17,12 @@ import { registerSubsRoutes } from './routes/subs.js';
 import { registerPlayRoutes } from './routes/play.js';
 import { registerProgressRoutes } from './routes/progress.js';
 import { registerListsRoutes } from './routes/lists.js';
+import { registerProfileRoutes } from './routes/profiles.js';
+import { registerStorageRoutes } from './routes/storage.js';
 import { startScanner, stopScanner } from './library/scanner.js';
 import { startCacheSweeper, stopCacheSweeper } from './media/cache.js';
+import { resumeQueueOnBoot } from './media/queue.js';
+import { ffmpegInfo } from './lib/ffmpeg.js';
 
 const app = Fastify({
   logger: {
@@ -66,6 +70,8 @@ await registerSubsRoutes(app);
 await registerPlayRoutes(app);
 await registerProgressRoutes(app);
 await registerListsRoutes(app);
+await registerProfileRoutes(app);
+await registerStorageRoutes(app);
 
 // Production: serve built SPA from apps/web/dist. Public — the SPA decides what to render
 // based on /api/auth/state; gated APIs return 401 to drive the login flow.
@@ -112,8 +118,17 @@ app.post('/api/library/rescan', async () => {
 
 const start = async () => {
   try {
+    const ff = ffmpegInfo();
+    app.log.info({ ffmpeg: ff.bin, ffprobe: ff.ffprobe, zscale: ff.zscale }, 'ffmpeg ready');
+    if (!ff.zscale) {
+      app.log.warn(
+        'HDR titles need ffmpeg with zscale — install: brew install ffmpeg-full (or set FFMPEG_PATH)',
+      );
+    }
+
     await app.listen({ host: config.HOST, port: config.PORT });
     await startScanner(app.log);
+    resumeQueueOnBoot(app.log);
     startCacheSweeper(app.log);
   } catch (err) {
     app.log.error(err);

@@ -106,7 +106,13 @@ export type QualityOption = {
 };
 
 export type PlayContext = {
-  file: { id: number; duration: number | null; width?: number | null; height?: number | null };
+  file: {
+    id: number;
+    duration: number | null;
+    width?: number | null;
+    height?: number | null;
+    pinned?: boolean;
+  };
   title: {
     id: number;
     kind: 'movie' | 'series';
@@ -125,11 +131,34 @@ export type PlayContext = {
   defaultQualityRung: string;
   thumbsMetaUrl: string;
   thumbsSpriteUrl: string;
-  /** HLS segment length in seconds — must match server playlist grid. */
   segmentDuration: number;
-  /** Resume position snapped to segment boundary (transcode/HLS). */
   playbackStartSec: number;
-  warm: { playlist: string; segment: string } | null;
+  encode: {
+    state: 'none' | 'queued' | 'running' | 'ready' | 'failed';
+    progressPct: number;
+    readyThroughSec: number;
+  };
+  audioTracks: { lang: string; label: string; rung: string; url: string }[];
+  skipMarkers: { kind: 'intro' | 'recap' | 'credits'; startSec: number; endSec: number; confidence: number | null }[];
+  subtitleStyle: Record<string, string> | null;
+  profileId: number;
+};
+
+export type Profile = {
+  id: number;
+  name: string;
+  avatar: string | null;
+  isDefault: boolean;
+  createdAt: number;
+};
+
+export type StorageStats = {
+  capBytes: number;
+  totalBytes: number;
+  fileCount: number;
+  protectedBytes: number;
+  renditions: { status: string; n: number; bytes: number | null }[];
+  queue: { id: number; file_id: number; priority: number; state: string; created_at: number }[];
 };
 
 export type TitleDetail = Title & {

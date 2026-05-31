@@ -7,6 +7,7 @@ import { config, paths } from '../config.js';
 
 export type PerflixSession = {
   userId?: number;
+  profileId?: number;
   pendingChallenge?: string;
   pendingChallengeFor?: 'register' | 'login' | 'enroll';
   pendingUserId?: number;

@@ -1,19 +1,13 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { db } from '../db/client.js';
 import { hlsCacheDir } from '../lib/paths.js';
-import { buildMasterPlaylist, buildMediaPlaylist } from '../media/hls.js';
+import { masterForFile, readMediaPlaylist } from '../media/hls.js';
+import { waitForSegmentFile } from '../media/encoder.js';
+import { type Rung, rungsFor } from '../media/ladder.js';
 import { probeAndPersist } from '../media/probe.js';
-import {
-  ensureSession,
-  parseSegmentIndex,
-  rungsFor,
-  touch,
-  waitForSegment,
-  type Rung,
-} from '../media/jobs.js';
-import { segmentIndexForResume } from '../media/keyframes.js';
+import { renditionDir } from '../media/renditions.js';
 
 const findFile = db.prepare(`
   SELECT id, path, duration, container, vcodec, acodec, width, height, mode
@@ -46,6 +40,8 @@ async function loadProbed(fileId: number) {
         width: row.width,
         height: row.height,
         mode: row.mode,
+        hdr: false,
+        audioStreams: [],
       },
     };
   }
@@ -54,8 +50,24 @@ async function loadProbed(fileId: number) {
 }
 
 function rungParam(s: string): Rung | null {
-  if (s === '2160' || s === '1080' || s === '720' || s === '480' || s === 'src') return s;
+  if (s === '2160' || s === '1080' || s === '720' || s === '480' || s === 'src' || s === 'hevc-hdr')
+    return s;
   return null;
+}
+
+function contentTypeFor(name: string): string {
+  if (name.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
+  if (name.endsWith('.mp4')) return 'video/mp4';
+  if (name.endsWith('.m4s')) return 'video/iso.segment';
+  return 'application/octet-stream';
+}
+
+function serveFile(reply: FastifyReply, file: string, cacheable: boolean) {
+  const st = statSync(file);
+  reply.header('Content-Type', contentTypeFor(file));
+  reply.header('Content-Length', String(st.size));
+  reply.header('Cache-Control', cacheable ? 'private, max-age=3600' : 'private, no-store');
+  return reply.send(createReadStream(file));
 }
 
 export async function registerHlsRoutes(app: FastifyInstance) {
@@ -64,14 +76,13 @@ export async function registerHlsRoutes(app: FastifyInstance) {
     if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
     const loaded = await loadProbed(id);
     if (!loaded) return reply.code(404).send({ error: 'not found' });
-    const rungs = rungsFor(loaded.probe);
-    const body = buildMasterPlaylist(id, rungs, loaded.probe);
+    const body = masterForFile(id, loaded.probe);
     reply.header('Content-Type', 'application/vnd.apple.mpegurl');
     reply.header('Cache-Control', 'private, no-store');
     return body;
   });
 
-  app.get<{ Params: { id: string; rung: string }; Querystring: { start?: string } }>(
+  app.get<{ Params: { id: string; rung: string } }>(
     '/hls/:id/:rung/playlist.m3u8',
     async (req, reply) => {
       const id = Number(req.params.id);
@@ -79,54 +90,80 @@ export async function registerHlsRoutes(app: FastifyInstance) {
       if (!Number.isFinite(id) || !rung) return reply.code(400).send({ error: 'bad params' });
       const loaded = await loadProbed(id);
       if (!loaded) return reply.code(404).send({ error: 'not found' });
-      const startSec = Number(req.query.start ?? 0);
-      if (Number.isFinite(startSec) && startSec > 0) {
-        const startSeg = segmentIndexForResume(startSec);
-        ensureSession(id, rung, loaded.row.path, loaded.probe, startSeg, req.log);
+
+      const dir = renditionDir(id, rung);
+      const pl = resolve(dir, 'playlist.m3u8');
+      let body = readMediaPlaylist(pl, loaded.probe.duration);
+      if (!body) {
+        const rungs = rungsFor(loaded.probe);
+        if (!rungs.includes(rung)) return reply.code(404).send({ error: 'rung not available' });
+        body = [
+          '#EXTM3U',
+          '#EXT-X-VERSION:7',
+          '#EXT-X-TARGETDURATION:5',
+          '#EXT-X-PLAYLIST-TYPE:EVENT',
+          '#EXT-X-MEDIA-SEQUENCE:0',
+          '#EXT-X-INDEPENDENT-SEGMENTS',
+          '#EXT-X-MAP:URI="init.mp4"',
+        ].join('\n') + '\n';
       }
-      const body = buildMediaPlaylist(loaded.probe);
       reply.header('Content-Type', 'application/vnd.apple.mpegurl');
       reply.header('Cache-Control', 'private, no-store');
       return body;
     },
   );
 
-  app.get<{ Params: { id: string; rung: string; seg: string } }>(
-    '/hls/:id/:rung/:seg',
-    async (req: FastifyRequest<{ Params: { id: string; rung: string; seg: string } }>, reply: FastifyReply) => {
+  app.get<{ Params: { id: string; lang: string } }>(
+    '/hls/:id/audio/:lang/playlist.m3u8',
+    async (req, reply) => {
+      const id = Number(req.params.id);
+      const lang = req.params.lang;
+      if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
+      const pl = resolve(hlsCacheDir, String(id), 'audio', lang, 'playlist.m3u8');
+      const body = readMediaPlaylist(pl);
+      if (!body) return reply.code(503).send({ error: 'audio not ready' });
+      reply.header('Content-Type', 'application/vnd.apple.mpegurl');
+      reply.header('Cache-Control', 'private, no-store');
+      return body;
+    },
+  );
+
+  app.get<{ Params: { id: string; rung: string; asset: string } }>(
+    '/hls/:id/:rung/:asset',
+    async (req: FastifyRequest<{ Params: { id: string; rung: string; asset: string } }>, reply: FastifyReply) => {
       const id = Number(req.params.id);
       const rung = rungParam(req.params.rung);
-      const seg = req.params.seg;
+      const asset = req.params.asset;
       if (!Number.isFinite(id) || !rung) return reply.code(400).send({ error: 'bad params' });
-      if (!/^seg_\d+\.ts$/.test(seg)) return reply.code(400).send({ error: 'bad seg name' });
-      const dir = resolve(hlsCacheDir, String(id), rung);
-      const file = resolve(dir, seg);
+
+      const dir = renditionDir(id, rung);
+      const file = resolve(dir, asset);
+      const valid = /^init\.mp4$/.test(asset) || /^seg_\d+\.m4s$/.test(asset);
+      if (!valid) return reply.code(400).send({ error: 'bad asset name' });
 
       if (existsSync(file)) {
         const st = statSync(file);
-        if (st.isFile() && st.size > 0) {
-          touch(id, rung);
-          reply.header('Content-Type', 'video/mp2t');
-          reply.header('Content-Length', String(st.size));
-          reply.header('Cache-Control', 'private, max-age=3600');
-          return reply.send(createReadStream(file));
-        }
+        if (st.isFile() && st.size > 0) return serveFile(reply, file, true);
       }
 
       const loaded = await loadProbed(id);
       if (!loaded) return reply.code(404).send({ error: 'not found' });
-      const segIndex = parseSegmentIndex(seg);
-      if (segIndex === null) return reply.code(400).send({ error: 'bad seg name' });
 
-      const session = ensureSession(id, rung, loaded.row.path, loaded.probe, segIndex, req.log);
-      const ok = await waitForSegment(dir, seg, session, 120_000);
+      const ok = await waitForSegmentFile(file, 120_000);
       if (!ok) return reply.code(503).send({ error: 'segment not ready' });
+      return serveFile(reply, file, false);
+    },
+  );
 
-      const st = statSync(file);
-      reply.header('Content-Type', 'video/mp2t');
-      reply.header('Content-Length', String(st.size));
-      reply.header('Cache-Control', 'private, max-age=3600');
-      return reply.send(createReadStream(file));
+  app.get<{ Params: { id: string; lang: string; asset: string } }>(
+    '/hls/:id/audio/:lang/:asset',
+    async (req, reply) => {
+      const id = Number(req.params.id);
+      const { lang, asset } = req.params;
+      if (!Number.isFinite(id)) return reply.code(400).send({ error: 'bad id' });
+      const file = resolve(hlsCacheDir, String(id), 'audio', lang, asset);
+      if (!existsSync(file)) return reply.code(503).send({ error: 'not ready' });
+      return serveFile(reply, file, true);
     },
   );
 }

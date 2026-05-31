@@ -3,7 +3,7 @@ import { db } from '../db/client.js';
 const movieFile = db.prepare(`
   SELECT f.id AS file_id, p.position, p.duration, p.updated_at AS progress_updated_at
   FROM files f
-  LEFT JOIN progress p ON p.file_id = f.id AND p.user_id = @user_id
+  LEFT JOIN progress p ON p.file_id = f.id AND p.profile_id = @profile_id
   WHERE f.title_id = @title_id AND f.episode_id IS NULL
   LIMIT 1
 `);
@@ -14,7 +14,7 @@ const seriesResume = db.prepare(`
   JOIN files f ON f.id = p.file_id
   JOIN episodes e ON e.id = f.episode_id
   WHERE e.title_id = @title_id
-    AND p.user_id = @user_id
+    AND p.profile_id = @profile_id
     AND p.position > 30
     AND (p.duration IS NULL OR p.position / p.duration < 0.95)
   ORDER BY p.updated_at DESC
@@ -36,9 +36,13 @@ export type PlayTarget = {
   action: 'play' | 'resume';
 };
 
-export function resolvePlayTarget(titleId: number, kind: 'movie' | 'series', userId: number): PlayTarget | null {
+export function resolvePlayTarget(
+  titleId: number,
+  kind: 'movie' | 'series',
+  profileId: number,
+): PlayTarget | null {
   if (kind === 'movie') {
-    const row = movieFile.get({ title_id: titleId, user_id: userId }) as
+    const row = movieFile.get({ title_id: titleId, profile_id: profileId }) as
       | { file_id: number; position: number | null; duration: number | null }
       | undefined;
     if (!row?.file_id) return null;
@@ -48,7 +52,7 @@ export function resolvePlayTarget(titleId: number, kind: 'movie' | 'series', use
     return { fileId: row.file_id, position, action: resume ? 'resume' : 'play' };
   }
 
-  const resumed = seriesResume.get({ title_id: titleId, user_id: userId }) as
+  const resumed = seriesResume.get({ title_id: titleId, profile_id: profileId }) as
     | { file_id: number; position: number; duration: number | null }
     | undefined;
   if (resumed?.file_id) {

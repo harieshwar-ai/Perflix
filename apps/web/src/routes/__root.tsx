@@ -12,6 +12,7 @@ import { useAuthState, useLogout } from '../lib/auth.js';
 import { pageTransition, pageVariants } from '../lib/motion.js';
 import { LoadingScreen } from '../components/ui/LoadingScreen.js';
 import { TmdbAttribution } from '../components/ui/TmdbAttribution.js';
+import { ProfileSwitcher } from '../components/profile/ProfileSwitcher.js';
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: RootLayout,
@@ -92,8 +93,12 @@ function TopNav({ onLogout }: { onLogout: () => void }) {
           <Link to="/lists" className={linkCls(path === '/lists')}>
             My List
           </Link>
+          <Link to="/storage" className={linkCls(path === '/storage')}>
+            Storage
+          </Link>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
+          <ProfileSwitcher />
           <div className="flex md:hidden items-center gap-3 text-xs">
             <Link to="/browse/$kind" params={{ kind: 'movie' }} className={linkCls(path.startsWith('/browse'))}>
               Browse

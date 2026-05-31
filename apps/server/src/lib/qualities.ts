@@ -1,4 +1,4 @@
-import { rungsFor, effectiveHeight, type Rung } from '../media/jobs.js';
+import { rungsFor, effectiveHeight, type Rung } from '../media/ladder.js';
 import type { ProbeResult } from '../media/probe.js';
 
 const RUNG_HEIGHT: Record<Rung, number> = {
@@ -7,6 +7,7 @@ const RUNG_HEIGHT: Record<Rung, number> = {
   '720': 720,
   '480': 480,
   src: 0,
+  'hevc-hdr': 2160,
 };
 
 export type QualityOption = {
@@ -14,6 +15,7 @@ export type QualityOption = {
   height: number;
   label: string;
   streamUrl: string;
+  bandwidth?: number;
 };
 
 export function qualitiesFor(
@@ -36,17 +38,29 @@ export function qualitiesFor(
   const rungs = rungsFor(probe);
   return rungs.map((rung) => {
     const height = rung === 'src' ? effectiveHeight(probe) : RUNG_HEIGHT[rung];
-    const label = rung === 'src' ? 'Source' : `${height}p`;
+    const label =
+      rung === 'src' ? 'Source' : rung === 'hevc-hdr' ? '4K HDR' : `${height}p`;
     return {
       rung,
       height,
       label,
-      streamUrl: `/hls/${fileId}/${rung}/playlist.m3u8`,
+      streamUrl: `/hls/${fileId}/master.m3u8`,
     };
   });
 }
 
-/** Default to the highest available quality rung. */
-export function defaultQuality(qualities: QualityOption[]): QualityOption {
-  return qualities.reduce((best, q) => (q.height > best.height ? q : best), qualities[0]!);
+/** Default to the highest available quality rung, optionally capped by profile pref. */
+export function defaultQuality(
+  qualities: QualityOption[],
+  capRung?: string | null,
+): QualityOption {
+  let pool = qualities;
+  if (capRung && capRung !== 'auto') {
+    const cap = qualities.find((q) => q.rung === capRung);
+    if (cap) {
+      pool = qualities.filter((q) => q.height <= cap.height);
+      if (pool.length === 0) pool = qualities;
+    }
+  }
+  return pool.reduce((best, q) => (q.height > best.height ? q : best), pool[0]!);
 }

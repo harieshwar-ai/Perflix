@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as StorageRouteImport } from './routes/storage'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ListsRouteImport } from './routes/lists'
 import { Route as IndexRouteImport } from './routes/index'
@@ -16,6 +17,11 @@ import { Route as TitleIdRouteImport } from './routes/title.$id'
 import { Route as PlayIdRouteImport } from './routes/play.$id'
 import { Route as BrowseKindRouteImport } from './routes/browse.$kind'
 
+const StorageRoute = StorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/lists': typeof ListsRoute
   '/login': typeof LoginRoute
+  '/storage': typeof StorageRoute
   '/browse/$kind': typeof BrowseKindRoute
   '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/lists': typeof ListsRoute
   '/login': typeof LoginRoute
+  '/storage': typeof StorageRoute
   '/browse/$kind': typeof BrowseKindRoute
   '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/lists': typeof ListsRoute
   '/login': typeof LoginRoute
+  '/storage': typeof StorageRoute
   '/browse/$kind': typeof BrowseKindRoute
   '/play/$id': typeof PlayIdRoute
   '/title/$id': typeof TitleIdRoute
@@ -78,16 +87,25 @@ export interface FileRouteTypes {
     | '/'
     | '/lists'
     | '/login'
+    | '/storage'
     | '/browse/$kind'
     | '/play/$id'
     | '/title/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/lists' | '/login' | '/browse/$kind' | '/play/$id' | '/title/$id'
+  to:
+    | '/'
+    | '/lists'
+    | '/login'
+    | '/storage'
+    | '/browse/$kind'
+    | '/play/$id'
+    | '/title/$id'
   id:
     | '__root__'
     | '/'
     | '/lists'
     | '/login'
+    | '/storage'
     | '/browse/$kind'
     | '/play/$id'
     | '/title/$id'
@@ -97,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ListsRoute: typeof ListsRoute
   LoginRoute: typeof LoginRoute
+  StorageRoute: typeof StorageRoute
   BrowseKindRoute: typeof BrowseKindRoute
   PlayIdRoute: typeof PlayIdRoute
   TitleIdRoute: typeof TitleIdRoute
@@ -104,6 +123,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/storage': {
+      id: '/storage'
+      path: '/storage'
+      fullPath: '/storage'
+      preLoaderRoute: typeof StorageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -153,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ListsRoute: ListsRoute,
   LoginRoute: LoginRoute,
+  StorageRoute: StorageRoute,
   BrowseKindRoute: BrowseKindRoute,
   PlayIdRoute: PlayIdRoute,
   TitleIdRoute: TitleIdRoute,

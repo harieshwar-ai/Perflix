@@ -61,24 +61,34 @@ CREATE TABLE IF NOT EXISTS files (
   height INTEGER,
   mode TEXT CHECK(mode IN ('direct','remux','transcode')),
   probed_at INTEGER,
-  added_at INTEGER NOT NULL
+  added_at INTEGER NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS profiles (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  avatar TEXT,
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS progress (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   position REAL NOT NULL,
   duration REAL,
   updated_at INTEGER NOT NULL,
-  PRIMARY KEY(user_id, file_id)
+  PRIMARY KEY(profile_id, file_id)
 );
 
 CREATE TABLE IF NOT EXISTS lists (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   title_id INTEGER NOT NULL REFERENCES titles(id) ON DELETE CASCADE,
   kind TEXT NOT NULL DEFAULT 'watchlist' CHECK(kind IN ('watchlist','watched','hidden')),
   added_at INTEGER NOT NULL,
-  PRIMARY KEY(user_id, title_id, kind)
+  PRIMARY KEY(profile_id, title_id, kind)
 );
 
 CREATE TABLE IF NOT EXISTS subtitles (
@@ -94,5 +104,68 @@ CREATE TABLE IF NOT EXISTS subtitles (
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_files_title ON files(title_id);
 CREATE INDEX IF NOT EXISTS idx_episodes_title ON episodes(title_id);
-CREATE INDEX IF NOT EXISTS idx_progress_user ON progress(user_id);
-CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(user_id);
+CREATE INDEX IF NOT EXISTS idx_progress_profile ON progress(profile_id);
+CREATE INDEX IF NOT EXISTS idx_lists_profile ON lists(profile_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_user ON profiles(user_id);
+
+CREATE TABLE IF NOT EXISTS profile_prefs (
+  profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (profile_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS renditions (
+  id INTEGER PRIMARY KEY,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('video','audio','sub')),
+  rung TEXT NOT NULL,
+  lang TEXT,
+  label TEXT,
+  codec TEXT,
+  container TEXT DEFAULT 'fmp4',
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','encoding','ready','failed')),
+  progress_pct REAL NOT NULL DEFAULT 0,
+  playlist_path TEXT,
+  init_path TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  bandwidth INTEGER,
+  width INTEGER,
+  height INTEGER,
+  hdr INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(file_id, kind, rung, lang)
+);
+
+CREATE TABLE IF NOT EXISTS encode_jobs (
+  id INTEGER PRIMARY KEY,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'queued'
+    CHECK(state IN ('queued','running','done','failed','cancelled')),
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  finished_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS skip_markers (
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('intro','recap','credits')),
+  start_sec REAL NOT NULL,
+  end_sec REAL NOT NULL,
+  confidence REAL,
+  PRIMARY KEY (file_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+  version INTEGER PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_renditions_file ON renditions(file_id);
+CREATE INDEX IF NOT EXISTS idx_renditions_status ON renditions(status);
+CREATE INDEX IF NOT EXISTS idx_encode_jobs_state ON encode_jobs(state);
